@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from ai_auto_ps import (
+    RETOUCH_CONTROL_KEYS,
     _apply_style_to_frame,
     apply_style_to_pil,
     Image,
@@ -14,7 +15,9 @@ from ai_auto_ps import (
     double_check_implementation,
     get_advisor,
     normalize_uploaded_file_paths,
+    normalize_retouch_controls,
     process_uploaded_files,
+    summarize_retouch_controls,
 )
 
 try:
@@ -51,9 +54,20 @@ class StyleRoutingTests(unittest.TestCase):
 
     def test_portrait_style_contains_advanced_controls(self):
         portrait = STYLE_PRESETS["portrait_soft"]
-        self.assertIn("skin_smooth", portrait)
-        self.assertIn("slim_face", portrait)
+        for key in RETOUCH_CONTROL_KEYS:
+            self.assertIn(key, portrait)
         self.assertGreater(portrait["skin_smooth"], 0)
+
+    def test_normalize_retouch_controls_clamps_values(self):
+        normalized = normalize_retouch_controls({"skin_smooth": 1.8, "eye_enlarge": -0.3, "x": 0.5})
+        self.assertEqual(normalized["skin_smooth"], 1.0)
+        self.assertEqual(normalized["eye_enlarge"], 0.0)
+        self.assertNotIn("x", normalized)
+
+    def test_summarize_retouch_controls_contains_labels(self):
+        summary = summarize_retouch_controls({"skin_smooth": 0.6, "slim_face": 0.3})
+        self.assertIn("磨皮=0.60", summary)
+        self.assertIn("瘦脸=0.30", summary)
 
     @unittest.skipIf(Image is None, "pillow not installed")
     def test_apply_style_to_pil_keeps_size_for_advanced_style(self):
@@ -90,6 +104,21 @@ class StyleRoutingTests(unittest.TestCase):
             self.assertIn("demo1", styles)
             self.assertIn("strategy=", reason)
             self.assertTrue(check.startswith("两轮检查"))
+
+    @unittest.skipIf(Image is None, "pillow not installed")
+    def test_process_uploaded_files_accepts_manual_retouch_controls(self):
+        with TemporaryDirectory() as tmp_dir:
+            p1 = Path(tmp_dir) / "portrait.jpg"
+            Image.new("RGB", (18, 18), (100, 90, 130)).save(p1)
+
+            _, _, _, _, reason, _ = process_uploaded_files(
+                [str(p1)],
+                "portrait_soft",
+                retouch_controls={"skin_smooth": 0.9, "eye_enlarge": 0.55},
+            )
+
+            self.assertIn("retouch=", reason)
+            self.assertIn("磨皮=0.90", reason)
 
     def test_double_check_reports_success(self):
         result = double_check_implementation()
