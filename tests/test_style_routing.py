@@ -4,9 +4,11 @@ from tempfile import TemporaryDirectory
 
 from ai_auto_ps import (
     _apply_style_to_frame,
+    apply_style_to_pil,
     Image,
     SUPPORTED_IMAGE_FORMATS,
     SUPPORTED_VIDEO_FORMATS,
+    STYLE_PRESETS,
     choose_style_from_description,
     detect_media_type,
     double_check_implementation,
@@ -46,6 +48,18 @@ class StyleRoutingTests(unittest.TestCase):
 
     def test_get_advisor_is_singleton(self):
         self.assertIs(get_advisor(), get_advisor())
+
+    def test_portrait_style_contains_advanced_controls(self):
+        portrait = STYLE_PRESETS["portrait_soft"]
+        self.assertIn("skin_smooth", portrait)
+        self.assertIn("slim_face", portrait)
+        self.assertGreater(portrait["skin_smooth"], 0)
+
+    @unittest.skipIf(Image is None, "pillow not installed")
+    def test_apply_style_to_pil_keeps_size_for_advanced_style(self):
+        sample = Image.new("RGB", (24, 24), (130, 90, 160))
+        styled = apply_style_to_pil(sample, "portrait_soft")
+        self.assertEqual(styled.size, sample.size)
 
     def test_normalize_uploaded_file_paths_from_mixed_input(self):
         class _MockFile:

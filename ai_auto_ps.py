@@ -58,12 +58,55 @@ SUPPORTED_VIDEO_FORMATS = set(BASE_VIDEO_FORMATS)
 
 
 STYLE_PRESETS: Dict[str, Dict[str, float]] = {
-    "portrait_soft": {"brightness": 1.05, "contrast": 1.08, "color": 1.06},
-    "landscape_vivid": {"brightness": 1.03, "contrast": 1.15, "color": 1.22},
-    "night_clarity": {"brightness": 1.20, "contrast": 1.12, "color": 0.98},
-    "cinematic": {"brightness": 0.97, "contrast": 1.20, "color": 0.90},
-    "food_fresh": {"brightness": 1.08, "contrast": 1.10, "color": 1.24},
-    "clean_natural": {"brightness": 1.00, "contrast": 1.05, "color": 1.05},
+    "portrait_soft": {
+        "brightness": 1.05,
+        "contrast": 1.08,
+        "color": 1.06,
+        "skin_smooth": 0.52,
+        "slim_face": 0.38,
+        "skin_smooth_video": 0.32,
+        "slim_face_video": 0.22,
+    },
+    "landscape_vivid": {
+        "brightness": 1.03,
+        "contrast": 1.15,
+        "color": 1.22,
+        "skin_smooth": 0.00,
+        "slim_face": 0.00,
+    },
+    "night_clarity": {
+        "brightness": 1.20,
+        "contrast": 1.12,
+        "color": 0.98,
+        "skin_smooth": 0.12,
+        "slim_face": 0.00,
+        "skin_smooth_video": 0.10,
+    },
+    "cinematic": {
+        "brightness": 0.97,
+        "contrast": 1.20,
+        "color": 0.90,
+        "skin_smooth": 0.18,
+        "slim_face": 0.10,
+        "skin_smooth_video": 0.12,
+        "slim_face_video": 0.06,
+    },
+    "food_fresh": {
+        "brightness": 1.08,
+        "contrast": 1.10,
+        "color": 1.24,
+        "skin_smooth": 0.00,
+        "slim_face": 0.00,
+    },
+    "clean_natural": {
+        "brightness": 1.00,
+        "contrast": 1.05,
+        "color": 1.05,
+        "skin_smooth": 0.10,
+        "slim_face": 0.05,
+        "skin_smooth_video": 0.06,
+        "slim_face_video": 0.03,
+    },
 }
 
 STYLE_HINTS: Dict[str, str] = {
@@ -159,6 +202,9 @@ class LightweightStyleAdvisor:
 
 _ADVISOR_INSTANCE: Optional[LightweightStyleAdvisor] = None
 _ADVISOR_LOCK = threading.Lock()
+_FACE_CASCADE = None
+_FACE_CASCADE_READY = False
+_FACE_CASCADE_LOCK = threading.Lock()
 
 
 def get_advisor() -> LightweightStyleAdvisor:
@@ -241,7 +287,123 @@ def apply_style_to_pil(image: "Image.Image", style_name: str) -> "Image.Image":
     out = ImageEnhance.Brightness(image).enhance(values["brightness"])
     out = ImageEnhance.Contrast(out).enhance(values["contrast"])
     out = ImageEnhance.Color(out).enhance(values["color"])
+    out = _apply_advanced_retouch_to_pil(out, style_name)
     return out
+
+
+def _get_face_cascade():
+    global _FACE_CASCADE
+    global _FACE_CASCADE_READY
+
+    if _FACE_CASCADE_READY:
+        return _FACE_CASCADE
+
+    with _FACE_CASCADE_LOCK:
+        if _FACE_CASCADE_READY:
+            return _FACE_CASCADE
+
+        cascade = None
+        if cv2 is not None:
+            try:
+                cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+                loaded = cv2.CascadeClassifier(cascade_path)
+                if loaded is not None and not loaded.empty():
+                    cascade = loaded
+            except Exception:
+                cascade = None
+
+        _FACE_CASCADE = cascade
+        _FACE_CASCADE_READY = True
+
+    return _FACE_CASCADE
+
+
+def _apply_skin_smoothing_bgr(frame: np.ndarray, strength: float) -> np.ndarray:
+    if np is None or cv2 is None or strength <= 0:
+        return frame
+
+    strength = float(np.clip(strength, 0.0, 1.0))
+    diameter = max(5, int(7 + strength * 8))
+    sigma = 25 + strength * 70
+
+    smooth = cv2.bilateralFilter(frame, d=diameter, sigmaColor=sigma, sigmaSpace=sigma)
+    ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+    skin_mask = cv2.inRange(ycrcb, np.array([0, 133, 77], dtype=np.uint8), np.array([255, 173, 127], dtype=np.uint8))
+    skin_mask = cv2.GaussianBlur(skin_mask, (0, 0), sigmaX=2.2, sigmaY=2.2).astype(np.float32) / 255.0
+
+    blend = np.clip((0.20 + 0.60 * strength) * skin_mask, 0.0, 1.0)[..., None]
+    out = frame.astype(np.float32) * (1.0 - blend) + smooth.astype(np.float32) * blend
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def _slim_face_region_bgr(region: np.ndarray, strength: float) -> np.ndarray:
+    if np is None or cv2 is None:
+        return region
+
+    h, w = region.shape[:2]
+    if h < 24 or w < 24:
+        return region
+
+    yy, xx = np.indices((h, w), dtype=np.float32)
+    cx = (w - 1) * 0.5
+    cy = (h - 1) * 0.5
+    nx = (xx - cx) / max(cx, 1.0)
+    ny = (yy - cy) / max(cy, 1.0)
+
+    radial = np.sqrt(nx * nx + (ny * 1.25) * (ny * 1.25))
+    influence = np.clip(1.0 - radial, 0.0, 1.0)
+    max_shift = strength * w * 0.14
+
+    map_x = np.clip(xx + nx * influence * max_shift, 0, w - 1).astype(np.float32)
+    map_y = yy.astype(np.float32)
+    return cv2.remap(region, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+
+
+def _apply_face_slimming_bgr(frame: np.ndarray, strength: float) -> np.ndarray:
+    if np is None or cv2 is None or strength <= 0:
+        return frame
+
+    strength = float(np.clip(strength, 0.0, 1.0))
+    cascade = _get_face_cascade()
+    if cascade is None:
+        return frame
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    faces = cascade.detectMultiScale(gray, scaleFactor=1.10, minNeighbors=5, minSize=(56, 56))
+    if faces is None or len(faces) == 0:
+        return frame
+
+    out = frame.copy()
+    for x, y, w, h in faces:
+        pad_x = int(w * 0.15)
+        pad_y = int(h * 0.20)
+        x0 = max(0, x - pad_x)
+        y0 = max(0, y - pad_y)
+        x1 = min(out.shape[1], x + w + pad_x)
+        y1 = min(out.shape[0], y + h + pad_y)
+        out[y0:y1, x0:x1] = _slim_face_region_bgr(out[y0:y1, x0:x1], strength)
+
+    return out
+
+
+def _apply_advanced_retouch_to_pil(image: "Image.Image", style_name: str) -> "Image.Image":
+    if Image is None or np is None or cv2 is None:
+        return image
+
+    values = STYLE_PRESETS.get(style_name, STYLE_PRESETS["clean_natural"])
+    smooth_strength = float(values.get("skin_smooth", 0.0))
+    slim_strength = float(values.get("slim_face", 0.0))
+
+    if smooth_strength <= 0 and slim_strength <= 0:
+        return image
+
+    rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    bgr = _apply_skin_smoothing_bgr(bgr, smooth_strength)
+    bgr = _apply_face_slimming_bgr(bgr, slim_strength)
+
+    result_rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(result_rgb)
 
 
 def process_image_file(
@@ -286,7 +448,13 @@ def _apply_style_to_frame(frame: np.ndarray, style_name: str) -> np.ndarray:
     frame_u8 = frame_f.astype(np.uint8)
     gray = cv2.cvtColor(frame_u8, cv2.COLOR_BGR2GRAY).astype(np.float32)[..., None]
     frame_f = np.clip(gray + (frame_f - gray) * values["color"], 0, 255)
-    return frame_f.astype(np.uint8)
+
+    out = frame_f.astype(np.uint8)
+    smooth_strength = float(values.get("skin_smooth_video", values.get("skin_smooth", 0.0) * 0.6))
+    slim_strength = float(values.get("slim_face_video", values.get("slim_face", 0.0) * 0.6))
+    out = _apply_skin_smoothing_bgr(out, smooth_strength)
+    out = _apply_face_slimming_bgr(out, slim_strength)
+    return out
 
 
 def process_video_file(
