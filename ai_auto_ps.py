@@ -210,6 +210,45 @@ RETOUCH_CONTROL_LABELS: Dict[str, str] = {
     "chin_refine": "下巴",
 }
 
+RETOUCH_PROFILE_PRESETS: Dict[str, Dict[str, float]] = {
+    "自然韩系": {
+        "skin_smooth": 0.62,
+        "skin_whiten": 0.34,
+        "acne_remove": 0.45,
+        "blush": 0.28,
+        "eye_brighten": 0.32,
+        "lip_tint": 0.28,
+        "slim_face": 0.36,
+        "eye_enlarge": 0.30,
+        "nose_slim": 0.22,
+        "chin_refine": 0.20,
+    },
+    "清透日系": {
+        "skin_smooth": 0.48,
+        "skin_whiten": 0.26,
+        "acne_remove": 0.32,
+        "blush": 0.16,
+        "eye_brighten": 0.25,
+        "lip_tint": 0.15,
+        "slim_face": 0.20,
+        "eye_enlarge": 0.18,
+        "nose_slim": 0.10,
+        "chin_refine": 0.10,
+    },
+    "轻欧式": {
+        "skin_smooth": 0.40,
+        "skin_whiten": 0.18,
+        "acne_remove": 0.22,
+        "blush": 0.18,
+        "eye_brighten": 0.22,
+        "lip_tint": 0.20,
+        "slim_face": 0.24,
+        "eye_enlarge": 0.22,
+        "nose_slim": 0.18,
+        "chin_refine": 0.16,
+    },
+}
+
 STYLE_HINTS: Dict[str, str] = {
     "person": "portrait_soft",
     "face": "portrait_soft",
@@ -392,6 +431,15 @@ def _resolve_style_values(
     overrides = normalize_retouch_controls(retouch_controls)
     values.update(overrides)
     return values
+
+
+def get_retouch_profile_values(profile_name: str) -> Dict[str, float]:
+    profile = RETOUCH_PROFILE_PRESETS.get(profile_name)
+    if profile:
+        return normalize_retouch_controls(profile)
+
+    portrait_defaults = _resolve_style_values("portrait_soft")
+    return {key: portrait_defaults.get(key, 0.0) for key in RETOUCH_CONTROL_KEYS}
 
 
 def detect_media_type(path: str) -> str:
@@ -1231,6 +1279,9 @@ def double_check_implementation() -> str:
 def build_ui():
     import gradio as gr
 
+    default_profile_name = "自然韩系"
+    default_profile_values = get_retouch_profile_values(default_profile_name)
+
     def _build_manual_retouch_controls(
         enable_manual_retouch,
         skin_smooth,
@@ -1261,6 +1312,10 @@ def build_ui():
                 "chin_refine": chin_refine,
             }
         )
+
+    def _apply_retouch_profile(profile_name: str):
+        values = get_retouch_profile_values(profile_name)
+        return tuple(values.get(key, 0.0) for key in RETOUCH_CONTROL_KEYS)
 
     def _handle_upload(
         file_obj,
@@ -1331,6 +1386,15 @@ def build_ui():
                     )
 
                 with gr.Accordion("🧑 亚洲人像精修调整板块", open=False):
+                    with gr.Row():
+                        retouch_profile = gr.Dropdown(
+                            choices=list(RETOUCH_PROFILE_PRESETS.keys()),
+                            value=default_profile_name,
+                            label="人像参数预设包",
+                            info="一键加载常见人像风格参数：自然韩系 / 清透日系 / 轻欧式",
+                        )
+                        apply_profile_btn = gr.Button("应用预设到滑杆", size="sm")
+
                     enable_manual_retouch = gr.Checkbox(
                         label="启用手动精修参数（覆盖风格默认）",
                         value=False,
@@ -1338,21 +1402,21 @@ def build_ui():
 
                     gr.Markdown("**皮肤美化**")
                     with gr.Row():
-                        skin_smooth = gr.Slider(0.0, 1.0, value=0.58, step=0.01, label="磨皮")
-                        skin_whiten = gr.Slider(0.0, 1.0, value=0.38, step=0.01, label="美白")
-                        acne_remove = gr.Slider(0.0, 1.0, value=0.42, step=0.01, label="祛痘")
+                        skin_smooth = gr.Slider(0.0, 1.0, value=default_profile_values["skin_smooth"], step=0.01, label="磨皮")
+                        skin_whiten = gr.Slider(0.0, 1.0, value=default_profile_values["skin_whiten"], step=0.01, label="美白")
+                        acne_remove = gr.Slider(0.0, 1.0, value=default_profile_values["acne_remove"], step=0.01, label="祛痘")
                     with gr.Row():
-                        blush = gr.Slider(0.0, 1.0, value=0.24, step=0.01, label="红润")
-                        eye_brighten = gr.Slider(0.0, 1.0, value=0.30, step=0.01, label="亮眼")
-                        lip_tint = gr.Slider(0.0, 1.0, value=0.22, step=0.01, label="唇色")
+                        blush = gr.Slider(0.0, 1.0, value=default_profile_values["blush"], step=0.01, label="红润")
+                        eye_brighten = gr.Slider(0.0, 1.0, value=default_profile_values["eye_brighten"], step=0.01, label="亮眼")
+                        lip_tint = gr.Slider(0.0, 1.0, value=default_profile_values["lip_tint"], step=0.01, label="唇色")
 
                     gr.Markdown("**五官塑形**")
                     with gr.Row():
-                        slim_face = gr.Slider(0.0, 1.0, value=0.40, step=0.01, label="瘦脸")
-                        eye_enlarge = gr.Slider(0.0, 1.0, value=0.28, step=0.01, label="大眼")
+                        slim_face = gr.Slider(0.0, 1.0, value=default_profile_values["slim_face"], step=0.01, label="瘦脸")
+                        eye_enlarge = gr.Slider(0.0, 1.0, value=default_profile_values["eye_enlarge"], step=0.01, label="大眼")
                     with gr.Row():
-                        nose_slim = gr.Slider(0.0, 1.0, value=0.24, step=0.01, label="窄鼻")
-                        chin_refine = gr.Slider(0.0, 1.0, value=0.18, step=0.01, label="下巴")
+                        nose_slim = gr.Slider(0.0, 1.0, value=default_profile_values["nose_slim"], step=0.01, label="窄鼻")
+                        chin_refine = gr.Slider(0.0, 1.0, value=default_profile_values["chin_refine"], step=0.01, label="下巴")
 
                     gr.Markdown("提示：不勾选“启用手动精修参数”时，将自动使用当前风格内置参数。")
 
@@ -1393,6 +1457,40 @@ def build_ui():
                 chin_refine,
             ],
             outputs=[output_files, before_preview, after_preview, output_style, output_reason, output_check],
+        )
+
+        retouch_profile.change(
+            fn=_apply_retouch_profile,
+            inputs=[retouch_profile],
+            outputs=[
+                skin_smooth,
+                skin_whiten,
+                acne_remove,
+                blush,
+                eye_brighten,
+                lip_tint,
+                slim_face,
+                eye_enlarge,
+                nose_slim,
+                chin_refine,
+            ],
+        )
+
+        apply_profile_btn.click(
+            fn=_apply_retouch_profile,
+            inputs=[retouch_profile],
+            outputs=[
+                skin_smooth,
+                skin_whiten,
+                acne_remove,
+                blush,
+                eye_brighten,
+                lip_tint,
+                slim_face,
+                eye_enlarge,
+                nose_slim,
+                chin_refine,
+            ],
         )
 
     return demo

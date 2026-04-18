@@ -4,8 +4,10 @@ from tempfile import TemporaryDirectory
 
 from ai_auto_ps import (
     RETOUCH_CONTROL_KEYS,
+    RETOUCH_PROFILE_PRESETS,
     _apply_style_to_frame,
     apply_style_to_pil,
+    get_retouch_profile_values,
     Image,
     SUPPORTED_IMAGE_FORMATS,
     SUPPORTED_VIDEO_FORMATS,
@@ -68,6 +70,16 @@ class StyleRoutingTests(unittest.TestCase):
         summary = summarize_retouch_controls({"skin_smooth": 0.6, "slim_face": 0.3})
         self.assertIn("磨皮=0.60", summary)
         self.assertIn("瘦脸=0.30", summary)
+
+    def test_retouch_profiles_cover_all_controls(self):
+        for _, values in RETOUCH_PROFILE_PRESETS.items():
+            for key in RETOUCH_CONTROL_KEYS:
+                self.assertIn(key, values)
+
+    def test_get_retouch_profile_values_returns_profile_values(self):
+        values = get_retouch_profile_values("自然韩系")
+        self.assertAlmostEqual(values["skin_smooth"], RETOUCH_PROFILE_PRESETS["自然韩系"]["skin_smooth"], places=2)
+        self.assertAlmostEqual(values["nose_slim"], RETOUCH_PROFILE_PRESETS["自然韩系"]["nose_slim"], places=2)
 
     @unittest.skipIf(Image is None, "pillow not installed")
     def test_apply_style_to_pil_keeps_size_for_advanced_style(self):
