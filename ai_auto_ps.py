@@ -408,13 +408,7 @@ def build_ui():
 
         return output_path, final_style, reason, double_check_implementation()
 
-    custom_theme = gr.themes.Soft(
-        primary_hue="blue",
-        secondary_hue="indigo",
-        font=[gr.themes.GoogleFont("sans-serif"), "Arial", "sans-serif"]
-    )
-
-    with gr.Blocks(title="AI Auto PS", theme=custom_theme) as demo:
+    with gr.Blocks(title="AI Auto PS") as demo:
         with gr.Column(elem_id="header"):
             gr.Markdown(
                 f"""
@@ -448,7 +442,7 @@ def build_ui():
                 
                 with gr.Accordion("📊 AI 分析与决策看板", open=True):
                     with gr.Group():
-                        output_style = gr.Textbox(label="实际应用风格", show_copy_button=True)
+                        output_style = gr.Textbox(label="实际应用风格")
                         output_reason = gr.Textbox(label="模型分析摘要与依据", lines=2)
 
                 with gr.Accordion("🛡️ 系统运行诊断 (高级)", open=False):

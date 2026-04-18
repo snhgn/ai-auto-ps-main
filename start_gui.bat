@@ -4,6 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 set "VENV_PY=.venv\Scripts\python.exe"
+set "DEPS_STAMP=.venv\.deps_ready"
 
 if not exist "%VENV_PY%" (
     echo [INFO] Python virtual environment not found. Creating .venv ...
@@ -21,16 +22,48 @@ if not exist "%VENV_PY%" (
     )
 )
 
-echo [INFO] Checking required packages ...
-"%VENV_PY%" -c "import numpy, PIL, cv2, gradio, transformers" >nul 2>nul
+if "%AI_AUTO_PS_FORCE_PIP%"=="1" (
+    echo [INFO] Force dependency refresh enabled.
+    goto install_deps
+)
+
+if exist "%DEPS_STAMP%" (
+    echo [INFO] Fast startup: dependency check skipped.
+    goto deps_ready
+)
+
+echo [INFO] First-time dependency check ...
+"%VENV_PY%" -c "import importlib.util, sys; mods=('numpy','PIL','cv2','gradio','transformers'); sys.exit(0 if all(importlib.util.find_spec(m) is not None for m in mods) else 1)" >nul 2>nul
 if errorlevel 1 (
-    echo [INFO] Installing dependencies from requirements.txt ...
-    "%VENV_PY%" -m pip install -r requirements.txt
+    goto install_deps
+)
+
+echo [INFO] Dependencies already ready.
+> "%DEPS_STAMP%" echo ready
+goto deps_ready
+
+:install_deps
+echo [INFO] Installing dependencies from requirements.txt ...
+set "PIP_DISABLE_PIP_VERSION_CHECK=1"
+"%VENV_PY%" -m pip install -r requirements.txt
+if errorlevel 1 (
+    echo [ERROR] Dependency installation failed.
+    pause
+    exit /b 1
+)
+> "%DEPS_STAMP%" echo ready
+
+:deps_ready
+
+if "%AI_AUTO_PS_VERIFY_DEPS%"=="1" (
+    echo [INFO] Verifying dependency specs ...
+    "%VENV_PY%" -c "import importlib.util, sys; mods=('numpy','PIL','cv2','gradio','transformers'); sys.exit(0 if all(importlib.util.find_spec(m) is not None for m in mods) else 1)" >nul 2>nul
     if errorlevel 1 (
-        echo [ERROR] Dependency installation failed.
-        pause
-        exit /b 1
+        echo [INFO] Required package specs not found. Reinstalling dependencies ...
+        goto install_deps
     )
+) else (
+    echo [INFO] Fast startup: skip per-run dependency verification.
 )
 
 if "%AI_AUTO_PS_HOST%"=="" set "AI_AUTO_PS_HOST=127.0.0.1"
