@@ -8,7 +8,7 @@ import threading
 import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 try:
     import numpy as np
@@ -367,6 +367,92 @@ def process_media(path: str, requested_style: str = "auto") -> Tuple[str, str, s
     return output_path, analysis.selected_style, reason
 
 
+def normalize_uploaded_file_paths(file_obj: Any) -> List[str]:
+    if file_obj is None:
+        return []
+
+    if isinstance(file_obj, (list, tuple)):
+        file_items = file_obj
+    else:
+        file_items = [file_obj]
+
+    paths: List[str] = []
+    for item in file_items:
+        if item is None:
+            continue
+        path = item.name if hasattr(item, "name") else str(item)
+        if path:
+            paths.append(path)
+    return paths
+
+
+def process_uploaded_files(
+    file_paths: Sequence[str],
+    requested_style: str = "auto",
+) -> Tuple[List[str], List[Tuple[str, str]], List[Tuple[str, str]], str, str, str]:
+    if not file_paths:
+        raise ValueError("请先上传图片或视频文件")
+
+    advisor = get_advisor()
+    image_paths: List[str] = []
+    video_paths: List[str] = []
+
+    for path in file_paths:
+        media_type = detect_media_type(path)
+        if media_type == "image":
+            image_paths.append(path)
+        else:
+            video_paths.append(path)
+
+    if video_paths and len(file_paths) > 1:
+        raise ValueError("批量上传模式目前仅支持图片；视频请单独上传一个文件处理。")
+
+    if video_paths:
+        output_path, analysis = process_video_file(
+            video_paths[0],
+            advisor,
+            requested_style,
+            skip_type_check=True,
+        )
+        reason = (
+            f"Model: {MODEL_NAME} | Strategy: {analysis.strategy} | "
+            f"Description: {analysis.description} | Selected style: {analysis.selected_style}"
+        )
+        return [output_path], [], [], analysis.selected_style, reason, double_check_implementation()
+
+    output_paths: List[str] = []
+    before_gallery: List[Tuple[str, str]] = []
+    after_gallery: List[Tuple[str, str]] = []
+    style_lines: List[str] = []
+    reason_lines: List[str] = []
+
+    for path in image_paths:
+        output_path, analysis = process_image_file(
+            path,
+            advisor,
+            requested_style,
+            skip_type_check=True,
+        )
+        src_name = Path(path).name
+
+        output_paths.append(output_path)
+        before_gallery.append((path, f"原图: {src_name}"))
+        after_gallery.append((output_path, f"结果: {src_name} -> {analysis.selected_style}"))
+        style_lines.append(f"{src_name}: {analysis.selected_style}")
+        reason_lines.append(
+            f"{src_name} | strategy={analysis.strategy} | description={analysis.description}"
+        )
+
+    return (
+        output_paths,
+        before_gallery,
+        after_gallery,
+        "\n".join(style_lines),
+        "\n".join(reason_lines),
+        double_check_implementation(),
+    )
+
+
 def double_check_implementation() -> str:
     first_pass_checks = [
         bool(MODEL_NAME and MODEL_REPO_URL),
@@ -397,16 +483,16 @@ def build_ui():
     import gradio as gr
 
     def _handle_upload(file_obj, style_name):
-        if file_obj is None:
+        file_paths = normalize_uploaded_file_paths(file_obj)
+        if not file_paths:
             raise gr.Error("请先上传图片或视频文件")
 
-        file_path = file_obj.name if hasattr(file_obj, "name") else str(file_obj)
         try:
-            output_path, final_style, reason = process_media(file_path, style_name)
+            result = process_uploaded_files(file_paths, style_name)
         except Exception as exc:
             raise gr.Error(str(exc)) from exc
 
-        return output_path, final_style, reason, double_check_implementation()
+        return result
 
     with gr.Blocks(title="AI Auto PS") as demo:
         with gr.Column(elem_id="header"):
@@ -424,8 +510,9 @@ def build_ui():
                 gr.Markdown("### 📥 第 1 步：媒体输入")
                 with gr.Group():
                     media_input = gr.File(
-                        label="将图片或视频拖拽到此处上传", 
-                        file_types=["image", "video"], 
+                        label="支持一次上传多张图片（视频请单独上传）",
+                        file_types=["image", "video"],
+                        file_count="multiple",
                         elem_classes="top-gap"
                     )
                     style_choice = gr.Dropdown(
@@ -438,12 +525,16 @@ def build_ui():
 
             with gr.Column(scale=5):
                 gr.Markdown("### 🎯 第 2 步：处理结果获取")
-                output_file = gr.File(label="📥 点击下载调色后的文件")
+                output_files = gr.File(label="📥 点击下载调色后的文件", file_count="multiple")
+
+                with gr.Row():
+                    before_preview = gr.Gallery(label="处理前预览", columns=3, rows=1, height="auto")
+                    after_preview = gr.Gallery(label="处理后预览", columns=3, rows=1, height="auto")
                 
                 with gr.Accordion("📊 AI 分析与决策看板", open=True):
                     with gr.Group():
-                        output_style = gr.Textbox(label="实际应用风格")
-                        output_reason = gr.Textbox(label="模型分析摘要与依据", lines=2)
+                        output_style = gr.Textbox(label="实际应用风格", lines=4)
+                        output_reason = gr.Textbox(label="模型分析摘要与依据", lines=6)
 
                 with gr.Accordion("🛡️ 系统运行诊断 (高级)", open=False):
                     output_check = gr.Textbox(label="双轮完整性检查状态", lines=1)
@@ -452,7 +543,7 @@ def build_ui():
         run_button.click(
             fn=_handle_upload,
             inputs=[media_input, style_choice],
-            outputs=[output_file, output_style, output_reason, output_check],
+            outputs=[output_files, before_preview, after_preview, output_style, output_reason, output_check],
         )
 
     return demo
