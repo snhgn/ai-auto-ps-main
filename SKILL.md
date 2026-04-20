@@ -214,98 +214,7 @@
 
 ---
 
-### 🚀 第四阶段：版本控制与上传
-
-**目标：** 将经过验证的版本上传到 GitHub
-
-**步骤：**
-
-1. **检查 Git 状态**
-   ```powershell
-   git status
-   git diff                    # 查看具体改动
-   ```
-   - 确认所有修改都已保存
-   - 确认新文件已被追踪
-   - 理解本次提交的所有改动
-
-2. **阶段化提交**
-   ```powershell
-   # 方案 A：分类提交（推荐）
-   git add ai_auto_ps.py multi_solution_generator.py
-   git commit -m "feat: 添加多版本管理功能"
-   
-   git add README.md UPGRADE_FEEDBACK_SYSTEM.md
-   git commit -m "docs: 更新文档说明新功能"
-   
-   # 方案 B：一次性提交
-   git add .
-   git commit -m "feat: 完整迭代 - 多版本反馈系统
-   
-   - 新增 solution_manager.py 模块
-   - 扩展 multi_solution_generator.py 支持理由
-   - 升级 UI 支持多版本对比和反馈
-   - 更新完整文档
-   "
-   ```
-   
-   提交信息规范：
-   - `feat:` 新功能
-   - `fix:` Bug 修复
-   - `docs:` 文档更新
-   - `refactor:` 代码重构
-   - `test:` 测试相关
-   - `perf:` 性能优化
-
-3. **本地验证**
-   ```powershell
-   # 查看即将推送的提交
-   git log --oneline origin/main..HEAD
-   
-   # 验证当前分支（应该是 main 或 develop）
-   git branch
-   ```
-   - 确认提交历史清晰
-   - 确认在正确的分支
-   - 确认没有本地未提交的改动
-
-4. **本地版本上传（Git Push）**
-   ```powershell
-   git push origin main
-   # 或
-   git push origin <branch-name>
-   ```
-   - 📡 将本地提交上传到本地 Git 仓库（如 Gitee/GitHub/GitLab）
-   - ⏳ 等待推送完成（若网络问题可稍后重试）
-   - ✅ 验证本地上传成功
-   - 📝 **说明**：此步骤可选择上传到 GitHub，不强制要求；本地 Git 提交完成即可进入下一阶段
-
-5. **远程验证（可选）**
-   ```powershell
-   # 如选择上传到 GitHub，可在远程仓库检查
-   # 1. 访问仓库页面
-   # 2. 查看最新提交
-   # 3. 验证文件是否正确上传
-   # 4. 检查 Actions（如有 CI/CD）
-   ```
-   
-   验证清单（如选择推送到远程）：
-   - ✅ 提交显示在远程仓库上
-   - ✅ 文件内容正确
-   - ✅ README 在主页正确显示
-   - ✅ CI/CD 检查通过（如有）
-
-**决策点：**
-- 是否推送到远程仓库（GitHub/Gitee 等）？
-  - ✅ 是 → 执行 git push，验证远程更新
-    - 📡 **网络异常处理**：
-      - 如果遇到网络超时/连接失败，**放弃上传任务**，本地工作已安全保存
-      - 提示：网络恢复后可稍后重新推送，不阻断工程流程
-  - ❌ 否 → 跳过，本地 Git 提交完成即可进入第五阶段
-
----
-
-### 🧹 第五阶段：工程文件清理
+### 🧹 第四阶段：工程文件清理
 
 **目标：** 删除开发过程中的临时文件和无关文件，保持工程目录干净，仅保留核心程序文件和 SKILL.md
 
@@ -405,6 +314,97 @@
 - 是否需要保留其他文档文件？
   - ✅ 是 → 有选择地保留必要的文档
   - ❌ 否 → 仅保留 README.md 和 SKILL.md
+
+---
+
+### 🚀 第五阶段：版本控制与上传
+
+**目标：** 将经过验证的版本上传到 GitHub
+
+**步骤：**
+
+1. **检查 Git 状态**
+   ```powershell
+   git status
+   git diff                    # 查看具体改动
+   ```
+   - 确认所有修改都已保存
+   - 确认新文件已被追踪
+   - 理解本次提交的所有改动
+
+2. **阶段化提交**
+   ```powershell
+   # 方案 A：分类提交（推荐）
+   git add ai_auto_ps.py multi_solution_generator.py
+   git commit -m "feat: 添加多版本管理功能"
+   
+   git add README.md UPGRADE_FEEDBACK_SYSTEM.md
+   git commit -m "docs: 更新文档说明新功能"
+   
+   # 方案 B：一次性提交
+   git add .
+   git commit -m "feat: 完整迭代 - 多版本反馈系统
+   
+   - 新增 solution_manager.py 模块
+   - 扩展 multi_solution_generator.py 支持理由
+   - 升级 UI 支持多版本对比和反馈
+   - 更新完整文档
+   "
+   ```
+   
+   提交信息规范：
+   - `feat:` 新功能
+   - `fix:` Bug 修复
+   - `docs:` 文档更新
+   - `refactor:` 代码重构
+   - `test:` 测试相关
+   - `perf:` 性能优化
+
+3. **本地验证**
+   ```powershell
+   # 查看即将推送的提交
+   git log --oneline origin/main..HEAD
+   
+   # 验证当前分支（应该是 main 或 develop）
+   git branch
+   ```
+   - 确认提交历史清晰
+   - 确认在正确的分支
+   - 确认没有本地未提交的改动
+
+4. **本地版本上传（Git Push）**
+   ```powershell
+   git push origin main
+   # 或
+   git push origin <branch-name>
+   ```
+   - 📡 将本地提交上传到本地 Git 仓库（如 Gitee/GitHub/GitLab）
+   - ⏳ 等待推送完成（若网络问题可稍后重试）
+   - ✅ 验证本地上传成功
+   - 📝 **说明**：此步骤可选择上传到 GitHub，不强制要求；本地 Git 提交完成即可进入下一阶段
+
+5. **远程验证（可选）**
+   ```powershell
+   # 如选择上传到 GitHub，可在远程仓库检查
+   # 1. 访问仓库页面
+   # 2. 查看最新提交
+   # 3. 验证文件是否正确上传
+   # 4. 检查 Actions（如有 CI/CD）
+   ```
+   
+   验证清单（如选择推送到远程）：
+   - ✅ 提交显示在远程仓库上
+   - ✅ 文件内容正确
+   - ✅ README 在主页正确显示
+   - ✅ CI/CD 检查通过（如有）
+
+**决策点：**
+- 是否推送到远程仓库（GitHub/Gitee 等）？
+  - ✅ 是 → 执行 git push，验证远程更新
+    - 📡 **网络异常处理**：
+      - 如果遇到网络超时/连接失败，**放弃上传任务**，本地工作已安全保存
+      - 提示：网络恢复后可稍后重新推送，不阻断工程流程
+  - ❌ 否 → 跳过，本地 Git 提交完成即可进入下一步
 
 ---
 
