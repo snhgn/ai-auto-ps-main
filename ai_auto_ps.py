@@ -1306,7 +1306,17 @@ def normalize_uploaded_file_paths(file_obj: Any) -> List[str]:
     for item in file_items:
         if item is None:
             continue
-        path = item.name if hasattr(item, "name") else str(item)
+        if isinstance(item, dict):
+            # Gradio FileData-like payloads expose the resolved temporary path in `path`.
+            # `name` is used only as a compatibility fallback when `path` is absent.
+            raw_path = item.get("path") if "path" in item else item.get("name")
+            path = str(raw_path).strip() if raw_path is not None else ""
+        elif hasattr(item, "path"):
+            path = str(getattr(item, "path") or "").strip()
+        elif hasattr(item, "name"):
+            path = str(getattr(item, "name") or "").strip()
+        else:
+            path = str(item).strip()
         if path:
             paths.append(path)
     return paths
@@ -1316,7 +1326,7 @@ def process_uploaded_files(
     file_paths: Sequence[str],
     requested_style: str = "auto",
     retouch_controls: Optional[Dict[str, float]] = None,
-) -> Tuple[List[str], List[Tuple[str, str]], List[Tuple[str, str]], str, str, str]:
+) -> Tuple[List[str], List[str], List[str], str, str, str]:
     if not file_paths:
         raise ValueError("请先上传图片或视频文件")
 
@@ -1350,8 +1360,8 @@ def process_uploaded_files(
         return [output_path], [], [], analysis.selected_style, reason, double_check_implementation()
 
     output_paths: List[str] = []
-    before_gallery: List[Tuple[str, str]] = []
-    after_gallery: List[Tuple[str, str]] = []
+    before_gallery: List[str] = []
+    after_gallery: List[str] = []
     style_lines: List[str] = []
     reason_lines: List[str] = []
 
@@ -1366,8 +1376,8 @@ def process_uploaded_files(
         src_name = Path(path).name
 
         output_paths.append(output_path)
-        before_gallery.append((path, f"原图: {src_name}"))
-        after_gallery.append((output_path, f"结果: {src_name} -> {analysis.selected_style}"))
+        before_gallery.append(path)
+        after_gallery.append(output_path)
         style_lines.append(f"{src_name}: {analysis.selected_style}")
         reason_lines.append(
             f"{src_name} | strategy={analysis.strategy} | description={analysis.raw_description} | "

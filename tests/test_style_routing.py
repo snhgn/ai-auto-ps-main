@@ -95,6 +95,16 @@ class StyleRoutingTests(unittest.TestCase):
         files = [_MockFile("a.jpg"), "b.png", None]
         self.assertEqual(normalize_uploaded_file_paths(files), ["a.jpg", "b.png"])
 
+    def test_normalize_uploaded_file_paths_supports_path_and_dict_items(self):
+        class _MockPathFile:
+            def __init__(self, path):
+                self.path = path
+
+        files = [_MockPathFile("c.webp"), {"path": "d.jpg"}, {"name": "e.png"}, {"path": "f.bmp", "name": "g.png"}]
+        normalized = normalize_uploaded_file_paths(files)
+        self.assertEqual(normalized, ["c.webp", "d.jpg", "e.png", "f.bmp"])
+        self.assertNotIn("g.png", normalized)
+
     def test_process_uploaded_files_empty_raises(self):
         with self.assertRaises(ValueError):
             process_uploaded_files([])
@@ -113,6 +123,8 @@ class StyleRoutingTests(unittest.TestCase):
             self.assertEqual(len(outputs), 2)
             self.assertEqual(len(before), 2)
             self.assertEqual(len(after), 2)
+            self.assertEqual(before[0], str(p1))
+            self.assertTrue(after[0].endswith(".jpg"))
             self.assertIn("demo1", styles)
             self.assertIn("strategy=", reason)
             self.assertTrue(check.startswith("两轮检查"))

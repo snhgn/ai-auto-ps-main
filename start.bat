@@ -71,14 +71,18 @@ if not exist ".venv\.deps_ready" (
 
 :install_deps
 echo [INFO] 检查并安装依赖...
-"%VENV_PY%" -m pip install --upgrade pip setuptools wheel -q
-if errorlevel 1 (
-    echo [ERROR] pip升级失败
-    pause
-    exit /b 1
+REM 默认跳过 pip/setuptools/wheel 升级以减少冷启动耗时；仅在需要时设置 AI_AUTO_PS_BOOTSTRAP_PIP=1
+if "%AI_AUTO_PS_BOOTSTRAP_PIP%"=="1" (
+    echo [INFO] 升级 pip/setuptools/wheel...
+    "%VENV_PY%" -m pip install --upgrade pip setuptools wheel --disable-pip-version-check -q
+    if errorlevel 1 (
+        echo [ERROR] pip升级失败
+        pause
+        exit /b 1
+    )
 )
 
-"%VENV_PY%" -m pip install -r requirements.txt
+"%VENV_PY%" -m pip install -r requirements.txt --disable-pip-version-check --prefer-binary
 if errorlevel 1 (
     echo [ERROR] 依赖安装失败
     pause
