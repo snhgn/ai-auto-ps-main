@@ -8,6 +8,21 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import json
 
+BRIGHTNESS_LOWER_MIN = 0.85
+BRIGHTNESS_LOWER_MULTIPLIER = 0.92
+BRIGHTNESS_HIGHER_MAX = 1.20
+BRIGHTNESS_HIGHER_MULTIPLIER = 1.08
+
+SATURATION_LOWER_MIN = 0.80
+SATURATION_LOWER_MULTIPLIER = 0.90
+SATURATION_HIGHER_MAX = 1.35
+SATURATION_HIGHER_MULTIPLIER = 1.10
+
+NATURAL_STYLE_CONTRAST_MIN = 1.0
+NATURAL_STYLE_CONTRAST_MULTIPLIER = 0.90
+NATURAL_STYLE_COLOR_MIN = 0.90
+NATURAL_STYLE_COLOR_MULTIPLIER = 0.92
+
 
 @dataclass
 class SolutionVersion:
@@ -56,12 +71,22 @@ class SolutionSession:
     last_modified: str = field(default_factory=lambda: datetime.now().isoformat())
 
 
+@dataclass
+class PreferenceMemoryEntry:
+    """用户偏好记忆条目（按更新时间覆盖冲突偏好）"""
+    key: str
+    value: str
+    source_feedback: str
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+
 class SolutionManager:
     """管理多版本方案、反馈和迭代"""
     
     def __init__(self):
         self.sessions: Dict[str, SolutionSession] = {}
         self.current_session_id: Optional[str] = None
+        self.preference_memory: Dict[str, PreferenceMemoryEntry] = {}
     
     def create_session(self, session_id: str, input_image_path: str) -> SolutionSession:
         """创建新的修图会话"""
@@ -249,7 +274,74 @@ class SolutionManager:
         if session.model_history:
             report += f"## 使用的模型\n\n{', '.join(session.model_history)}\n"
         
+        if self.preference_memory:
+            report += "\n## 用户偏好记忆库\n\n"
+            for key in sorted(self.preference_memory.keys()):
+                entry = self.preference_memory[key]
+                report += f"- {entry.key}: {entry.value} (更新时间: {entry.updated_at})\n"
+        
         return report
+    
+    def update_preference_memory(
+        self,
+        preferences: Dict[str, str],
+        source_feedback: str,
+        updated_at: Optional[str] = None,
+    ) -> Dict[str, PreferenceMemoryEntry]:
+        """更新用户偏好记忆，冲突项按最新时间戳覆盖并清理旧值"""
+        timestamp = updated_at or datetime.now().isoformat()
+        for key, value in (preferences or {}).items():
+            if value is None:
+                continue
+            normalized_value = str(value).strip()
+            if not normalized_value:
+                continue
+            self.preference_memory[key] = PreferenceMemoryEntry(
+                key=key,
+                value=normalized_value,
+                source_feedback=source_feedback,
+                updated_at=timestamp,
+            )
+        return dict(self.preference_memory)
+    
+    def get_preference_memory_summary(self) -> str:
+        """返回偏好记忆可读摘要"""
+        if not self.preference_memory:
+            return "暂无偏好记忆"
+        lines = ["当前偏好记忆："]
+        for key in sorted(self.preference_memory.keys()):
+            entry = self.preference_memory[key]
+            lines.append(f"- {entry.key}={entry.value}（{entry.updated_at}）")
+        return "\n".join(lines)
+    
+    def apply_memory_preferences(
+        self,
+        style_adjustments: Dict[str, float],
+        solution_name: str,
+    ) -> Dict[str, float]:
+        """应用偏好记忆到调色参数（后写入优先，避免冲突叠加）"""
+        adjusted = dict(style_adjustments or {})
+        brightness_pref = self.preference_memory.get("brightness")
+        saturation_pref = self.preference_memory.get("saturation")
+        style_pref = self.preference_memory.get("style")
+        
+        if brightness_pref:
+            if brightness_pref.value == "lower":
+                adjusted["brightness"] = max(BRIGHTNESS_LOWER_MIN, adjusted.get("brightness", 1.0) * BRIGHTNESS_LOWER_MULTIPLIER)
+            elif brightness_pref.value == "higher":
+                adjusted["brightness"] = min(BRIGHTNESS_HIGHER_MAX, adjusted.get("brightness", 1.0) * BRIGHTNESS_HIGHER_MULTIPLIER)
+        
+        if saturation_pref:
+            if saturation_pref.value == "lower":
+                adjusted["color"] = max(SATURATION_LOWER_MIN, adjusted.get("color", 1.0) * SATURATION_LOWER_MULTIPLIER)
+            elif saturation_pref.value == "higher":
+                adjusted["color"] = min(SATURATION_HIGHER_MAX, adjusted.get("color", 1.0) * SATURATION_HIGHER_MULTIPLIER)
+        
+        if style_pref and style_pref.value == "natural" and solution_name in {"cinematic_grade", "contrast_pop"}:
+            adjusted["contrast"] = max(NATURAL_STYLE_CONTRAST_MIN, adjusted.get("contrast", 1.0) * NATURAL_STYLE_CONTRAST_MULTIPLIER)
+            adjusted["color"] = max(NATURAL_STYLE_COLOR_MIN, adjusted.get("color", 1.0) * NATURAL_STYLE_COLOR_MULTIPLIER)
+        
+        return adjusted
     
     def clear_session(self, session_id: str):
         """清除会话"""
