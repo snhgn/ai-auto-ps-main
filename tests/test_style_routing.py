@@ -100,8 +100,8 @@ class StyleRoutingTests(unittest.TestCase):
             def __init__(self, path):
                 self.path = path
 
-        files = [_MockPathFile("c.webp"), {"path": "d.jpg"}, {"name": "e.png"}]
-        self.assertEqual(normalize_uploaded_file_paths(files), ["c.webp", "d.jpg", "e.png"])
+        files = [_MockPathFile("c.webp"), {"path": "d.jpg"}, {"name": "e.png"}, {"path": "f.bmp", "name": "g.png"}]
+        self.assertEqual(normalize_uploaded_file_paths(files), ["c.webp", "d.jpg", "e.png", "f.bmp"])
 
     def test_process_uploaded_files_empty_raises(self):
         with self.assertRaises(ValueError):

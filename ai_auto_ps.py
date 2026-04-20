@@ -1307,13 +1307,17 @@ def normalize_uploaded_file_paths(file_obj: Any) -> List[str]:
         if item is None:
             continue
         if isinstance(item, dict):
-            path = item.get("path") or item.get("name") or ""
+            if "path" in item:
+                raw_path = item.get("path")
+            else:
+                raw_path = item.get("name")
+            path = str(raw_path).strip() if raw_path is not None else ""
         elif hasattr(item, "path"):
-            path = str(getattr(item, "path") or "")
+            path = str(getattr(item, "path") or "").strip()
         elif hasattr(item, "name"):
-            path = str(getattr(item, "name") or "")
+            path = str(getattr(item, "name") or "").strip()
         else:
-            path = str(item)
+            path = str(item).strip()
         if path:
             paths.append(path)
     return paths
