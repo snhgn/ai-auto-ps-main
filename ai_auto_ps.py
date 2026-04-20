@@ -1153,7 +1153,7 @@ def process_image_file(
         
         output_path = _build_output_path(src, analysis.selected_style, ".jpg")
         styled.save(output_path, format="JPEG", quality=95)
-        return output_path, analysis
+        return str(output_path), analysis
     
     # 多方案处理
     output_dict = {}
@@ -1170,7 +1170,7 @@ def process_image_file(
         # 保存
         output_path = _build_output_path(src, solution.name, ".jpg")
         styled.save(output_path, format="JPEG", quality=95)
-        output_dict[solution.name] = output_path
+        output_dict[solution.name] = str(output_path)
     
     return output_dict, analysis
 
@@ -1357,7 +1357,7 @@ def process_uploaded_files(
             f"Description: {analysis.description} | Selected style: {analysis.selected_style} | "
             f"Retouch: {summarize_retouch_controls(retouch_controls)}"
         )
-        return [output_path], [], [], analysis.selected_style, reason, double_check_implementation()
+        return [str(output_path)], [], [], analysis.selected_style, reason, double_check_implementation()
 
     output_paths: List[str] = []
     before_gallery: List[str] = []
@@ -1375,9 +1375,10 @@ def process_uploaded_files(
         )
         src_name = Path(path).name
 
-        output_paths.append(output_path)
+        output_path_str = str(output_path)
+        output_paths.append(output_path_str)
         before_gallery.append(path)
-        after_gallery.append(output_path)
+        after_gallery.append(output_path_str)
         style_lines.append(f"{src_name}: {analysis.selected_style}")
         reason_lines.append(
             f"{src_name} | strategy={analysis.strategy} | description={analysis.raw_description} | "
