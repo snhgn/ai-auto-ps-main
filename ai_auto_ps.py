@@ -362,28 +362,37 @@ class LightweightStyleAdvisor:
             return result
 
         self._load_model_if_needed()
-        description = ""
+        primary_description = ""
+        secondary_description = self._heuristic_description(image)
 
         if self._captioner is not None:
             try:
                 result = self._captioner(image)
                 if result and isinstance(result, list):
-                    description = _sanitize_analysis_text(
+                    primary_description = _sanitize_analysis_text(
                         _extract_text_from_model_output(result[0].get("generated_text", ""))
                     )
             except Exception:
-                description = ""
+                primary_description = ""
 
-        if not description:
-            description = self._heuristic_description(image)
+        if not primary_description:
+            primary_description = secondary_description
 
-        style = choose_style_from_description(description)
-        strategy = "llm" if self._captioner is not None else "heuristic_fallback"
-        
-        basic_result = AnalysisResult(description=description, selected_style=style, strategy=strategy)
+        primary_style = choose_style_from_description(primary_description)
+        secondary_style = choose_style_from_description(secondary_description)
+        style = _merge_collaborative_style(primary_style, secondary_style, image)
+        strategy = "dual_model_collaboration"
+        combined_description = f"primary={primary_description} || secondary={secondary_description}"
+
+        basic_result = AnalysisResult(description=combined_description, selected_style=style, strategy=strategy)
         
         if HAS_MULTI_SOLUTION:
-            return _convert_to_enhanced(basic_result, description)
+            enhanced = _convert_to_enhanced(basic_result, primary_description)
+            enhanced.analysis_reasoning = (
+                f"双模型协作：主模型建议 {primary_style}，辅助模型建议 {secondary_style}，最终采用 {style}"
+            )
+            enhanced.raw_description = combined_description
+            return enhanced
         
         return basic_result
 
@@ -415,6 +424,20 @@ def choose_style_from_description(description: str) -> str:
         if hint in lowered:
             return style
     return "clean_natural"
+
+
+def _merge_collaborative_style(primary_style: str, secondary_style: str, image: "Image.Image") -> str:
+    if primary_style == secondary_style:
+        return primary_style
+    if np is None:
+        return primary_style
+    arr = np.asarray(image.convert("RGB"), dtype=np.float32)
+    brightness = float(arr.mean()) / 255.0
+    if brightness < 0.28:
+        return "night_clarity"
+    if brightness > 0.75 and secondary_style == "landscape_vivid":
+        return secondary_style
+    return primary_style
 
 
 def _extract_text_from_model_output(payload: Any) -> str:
@@ -1523,6 +1546,25 @@ def build_ui():
         
         return display
     
+    def _extract_preferences_from_feedback(feedback_text: str, feedback_sentiment: str) -> Dict[str, str]:
+        lowered = (feedback_text or "").lower()
+        preferences: Dict[str, str] = {}
+        if any(word in lowered for word in ["太亮", "过曝", "刺眼", "too bright"]):
+            preferences["brightness"] = "lower"
+        elif any(word in lowered for word in ["太暗", "偏暗", "提亮", "too dark"]):
+            preferences["brightness"] = "higher"
+        if any(word in lowered for word in ["太艳", "太饱和", "过饱和", "oversaturated"]):
+            preferences["saturation"] = "lower"
+        elif any(word in lowered for word in ["不够鲜艳", "太灰", "发灰", "desaturated"]):
+            preferences["saturation"] = "higher"
+        if "自然" in lowered:
+            preferences["style"] = "natural"
+        elif "电影" in lowered:
+            preferences["style"] = "cinematic"
+        if feedback_sentiment.startswith("不满意") and "style" not in preferences:
+            preferences["style"] = "natural"
+        return preferences
+    
     def _create_version_comparison_html(versions: List) -> str:
         """为多个版本创建对比HTML"""
         if not versions:
@@ -1546,32 +1588,36 @@ def build_ui():
         session_id_state: str,
         feedback_text: str,
         target_solution: str,
+        feedback_sentiment: str,
         prefer_large_model: bool,
-    ) -> Tuple[str, str]:
+    ) -> Tuple[str, str, str]:
         """处理用户反馈，返回确认信息和迭代建议"""
         if not HAS_SOLUTION_MANAGER:
-            return "error", "解决方案管理器不可用"
+            return "error", "解决方案管理器不可用", "暂无偏好记忆"
         
         try:
             manager = get_manager()
             if not session_id_state or session_id_state not in manager.sessions:
-                return "error", "找不到会话，请重新上传图片"
+                return "error", "找不到会话，请重新上传图片", "暂无偏好记忆"
             
-            # 分析反馈情感
-            sentiment = "neutral"
-            if any(word in feedback_text.lower() for word in ["好", "很棒", "满意", "完美"]):
-                sentiment = "positive"
-            elif any(word in feedback_text.lower() for word in ["不好", "差", "不满意", "太"]):
-                sentiment = "negative"
+            sentiment_map = {"满意 👍": "positive", "一般 🤷": "neutral", "不满意 👎": "negative"}
+            sentiment = sentiment_map.get(feedback_sentiment, "neutral")
             
             # 添加反馈
-            manager.add_feedback(
+            feedback = manager.add_feedback(
                 session_id_state,
                 feedback_text=feedback_text,
                 target_solution=target_solution,
                 sentiment=sentiment,
                 prefer_stronger_model=prefer_large_model,
             )
+            preferences = _extract_preferences_from_feedback(feedback_text, feedback_sentiment)
+            if preferences:
+                manager.update_preference_memory(
+                    preferences=preferences,
+                    source_feedback=feedback_text,
+                    updated_at=feedback.created_at,
+                )
             
             # 生成迭代建议
             suggestions = manager.get_iteration_suggestions(session_id_state)
@@ -1580,14 +1626,46 @@ def build_ui():
             suggestions_text = "## 迭代建议\n\n"
             for key, value in suggestions.items():
                 suggestions_text += f"**{key}**: {value}\n\n"
+            if preferences:
+                suggestions_text += f"**memory**: 已更新偏好记忆 {preferences}\n\n"
             
             if not suggestions:
                 suggestions_text += "继续上传反馈以获得更多优化建议"
             
-            return confirm_msg, suggestions_text
+            return confirm_msg, suggestions_text, manager.get_preference_memory_summary()
             
         except Exception as e:
-            return "error", f"处理反馈时出错: {str(e)}"
+            return "error", f"处理反馈时出错: {str(e)}", "暂无偏好记忆"
+
+    def _build_memory_aware_solutions(
+        analysis: EnhancedAnalysisResult,
+        manager,
+        session_id: str,
+    ) -> List[SolutionVariant]:
+        solutions = generate_multiple_solutions(analysis, max_solutions=4)
+        latest_feedback = manager.sessions[session_id].feedbacks[-1] if manager.sessions[session_id].feedbacks else None
+        adjusted: List[SolutionVariant] = []
+        for sol in solutions:
+            style_adjustments = manager.apply_memory_preferences(sol.style_adjustments, sol.name)
+            intensity = sol.intensity
+            if latest_feedback and latest_feedback.sentiment == "negative":
+                if sol.name in {"contrast_pop", "cinematic_grade", "vibrance_boost"}:
+                    intensity = max(0.45, intensity * 0.88)
+                    style_adjustments["contrast"] = max(1.0, style_adjustments.get("contrast", 1.0) * 0.92)
+                    style_adjustments["color"] = max(0.85, style_adjustments.get("color", 1.0) * 0.90)
+            adjusted.append(
+                SolutionVariant(
+                    name=sol.name,
+                    display_name=sol.display_name,
+                    description=sol.description,
+                    reasoning=sol.reasoning,
+                    style_adjustments=style_adjustments,
+                    retouch_overrides=sol.retouch_overrides.copy(),
+                    applicable_scenes=sol.applicable_scenes.copy(),
+                    intensity=intensity,
+                )
+            )
+        return adjusted
 
     def _handle_upload(
         file_obj,
@@ -1629,6 +1707,9 @@ def build_ui():
 
         versions_text = "当前上传结果未生成多版本详情"
         session_id = ""
+        solution_preview_paths: List[str] = []
+        target_update = gr.update()
+        memory_summary = "暂无偏好记忆"
 
         if HAS_MULTI_SOLUTION and HAS_SOLUTION_MANAGER:
             try:
@@ -1664,12 +1745,110 @@ def build_ui():
                             style_adjustments=sol.style_adjustments,
                             retouch_overrides=sol.retouch_overrides,
                         )
+                    try:
+                        output_dict, _ = process_image_file(
+                            first_image_path,
+                            get_advisor(),
+                            style_name,
+                            skip_type_check=True,
+                            retouch_controls=retouch_controls,
+                            solutions=solutions,
+                        )
+                        if isinstance(output_dict, dict):
+                            solution_preview_paths = list(output_dict.values())
+                            for ver in manager.sessions[session_id].versions:
+                                ver.output_path = output_dict.get(ver.solution_name)
+                    except Exception:
+                        solution_preview_paths = []
+                    target_update = gr.update(
+                        choices=[sol.name for sol in solutions],
+                        value=solutions[0].name if solutions else None,
+                    )
+                    memory_summary = manager.get_preference_memory_summary()
                 elif not first_image_path:
                     versions_text = "当前输入包含视频，暂不支持多版本对比。"
             except Exception as exc:
                 versions_text = f"生成多版本详情失败: {exc}"
 
-        return (*result, versions_text, session_id)
+        return (*result, versions_text, session_id, solution_preview_paths, target_update, memory_summary)
+
+    def _regenerate_from_feedback(
+        session_id_state: str,
+        style_name: str,
+        enable_manual_retouch,
+        skin_smooth,
+        skin_whiten,
+        acne_remove,
+        blush,
+        eye_brighten,
+        lip_tint,
+        slim_face,
+        eye_enlarge,
+        nose_slim,
+        chin_refine,
+    ):
+        if not HAS_MULTI_SOLUTION or not HAS_SOLUTION_MANAGER:
+            return "❌ 当前环境不支持迭代重生成", "", [], gr.update(), "暂无偏好记忆"
+        manager = get_manager()
+        if not session_id_state or session_id_state not in manager.sessions:
+            return "❌ 找不到会话，请先上传图片", "", [], gr.update(), manager.get_preference_memory_summary()
+        session = manager.sessions[session_id_state]
+        source_path = session.input_image_path
+        if not source_path:
+            return "❌ 会话缺少原始图片", "", [], gr.update(), manager.get_preference_memory_summary()
+
+        retouch_controls = _build_manual_retouch_controls(
+            enable_manual_retouch,
+            skin_smooth,
+            skin_whiten,
+            acne_remove,
+            blush,
+            eye_brighten,
+            lip_tint,
+            slim_face,
+            eye_enlarge,
+            nose_slim,
+            chin_refine,
+        )
+        try:
+            with Image.open(source_path) as image:
+                image = image.convert("RGB")
+                analysis = get_advisor().analyze(image, requested_style=style_name)
+            if not isinstance(analysis, EnhancedAnalysisResult):
+                analysis = _convert_to_enhanced(analysis, getattr(analysis, "description", ""))
+            round_no = manager.start_new_round(session_id_state)
+            solutions = _build_memory_aware_solutions(analysis, manager, session_id_state)
+            output_dict, _ = process_image_file(
+                source_path,
+                get_advisor(),
+                style_name,
+                skip_type_check=True,
+                retouch_controls=retouch_controls,
+                solutions=solutions,
+            )
+            for sol in solutions:
+                manager.add_version(
+                    session_id=session_id_state,
+                    solution_name=sol.name,
+                    display_name=sol.display_name,
+                    description=sol.description,
+                    reasoning=sol.reasoning,
+                    intensity=sol.intensity,
+                    style_adjustments=sol.style_adjustments,
+                    retouch_overrides=sol.retouch_overrides,
+                    output_path=output_dict.get(sol.name) if isinstance(output_dict, dict) else None,
+                )
+            preview_paths = list(output_dict.values()) if isinstance(output_dict, dict) else []
+            msg = f"✅ 已基于原图完成第 {round_no} 轮重生成（未叠加历史滤镜）。"
+            return (
+                msg,
+                _format_solutions_for_display(solutions),
+                preview_paths,
+                gr.update(choices=[sol.name for sol in solutions], value=solutions[0].name if solutions else None),
+                manager.get_preference_memory_summary(),
+            )
+        except Exception as exc:
+            return f"❌ 重新生成失败: {exc}", "", [], gr.update(), manager.get_preference_memory_summary()
 
     with gr.Blocks(title="AI Auto PS") as demo:
         with gr.Column(elem_id="header"):
@@ -1755,68 +1934,68 @@ def build_ui():
                 
                 # ==================== 新增：多版本对比和用户反馈部分 ====================
                 with gr.Accordion("🎨 多版本对比与反馈（新功能）", open=False):
-                    gr.Markdown("**对多个修图版本进行对比，提供反馈以获得更符合你想法的版本**")
+                    gr.Markdown("**双模型协作出方案，支持对比-点评-重生成闭环。**")
                     
                     # 隐藏的会话ID状态
                     session_id_state = gr.State(value="")
                     
-                    with gr.Group():
-                        gr.Markdown("### 版本详情")
-                        versions_display = gr.Textbox(
-                            label="📋 生成的修图方案详情",
-                            lines=10,
-                            interactive=False,
-                            info="展示AI生成的所有方案和推荐理由"
-                        )
-                    
-                    with gr.Group():
-                        gr.Markdown("### 用户反馈")
-                        with gr.Row():
-                            target_solution = gr.Dropdown(
-                                choices=["color_correction", "skin_tone_enhance", "contrast_pop", 
-                                        "vibrance_boost", "portrait_retouch", "cinematic_grade", "detail_sharpen"],
-                                value="color_correction",
-                                label="目标方案",
-                                info="选择你要反馈的修图方案"
+                    with gr.Tabs():
+                        with gr.Tab("方案与预览"):
+                            versions_display = gr.Textbox(
+                                label="📋 生成的修图方案详情",
+                                lines=10,
+                                interactive=False,
+                                info="展示双模型协作后的方案与推荐理由"
                             )
-                            feedback_sentiment = gr.Radio(
-                                choices=["满意 👍", "一般 🤷", "不满意 👎"],
-                                value="一般 🤷",
-                                label="你的评价"
+                            solution_preview_gallery = gr.Gallery(
+                                label="🖼️ 多方案预览（可反复点评）",
+                                columns=4,
+                                rows=1,
+                                height="auto",
                             )
-                        
-                        feedback_text = gr.Textbox(
-                            label="反馈内容",
-                            placeholder="请告诉AI你的想法，例如：'亮度太高了' 或 '我想要更自然的风格'",
-                            lines=3,
-                        )
-                        
-                        prefer_large_model = gr.Checkbox(
-                            label="🚀 使用更强的AI模型重新分析 (LLaVA-1.6-13B)",
-                            value=False,
-                            info="当前模型达不到要求时，勾选此选项使用更强大但更慢的模型"
-                        )
-                        
-                        submit_feedback_btn = gr.Button("提交反馈并获得迭代建议 💬", variant="secondary")
-                        
-                        feedback_response = gr.Textbox(
-                            label="AI迭代建议",
-                            lines=6,
-                            interactive=False,
-                            info="基于你的反馈，AI给出的优化建议"
-                        )
-                    
-                    with gr.Group():
-                        gr.Markdown("### 迭代生成")
-                        with gr.Row():
-                            regenerate_btn = gr.Button("基于反馈重新生成方案 🔄", variant="primary")
-                            export_report_btn = gr.Button("导出完整报告 📄")
-                        
-                        regenerate_output = gr.Textbox(
-                            label="重新生成结果",
-                            lines=4,
-                            interactive=False
-                        )
+                        with gr.Tab("点评与记忆"):
+                            with gr.Row():
+                                target_solution = gr.Dropdown(
+                                    choices=["color_correction"],
+                                    value="color_correction",
+                                    label="目标方案",
+                                    info="选择你要点评的方案"
+                                )
+                                feedback_sentiment = gr.Radio(
+                                    choices=["满意 👍", "一般 🤷", "不满意 👎"],
+                                    value="一般 🤷",
+                                    label="你的评价"
+                                )
+                            feedback_text = gr.Textbox(
+                                label="反馈内容",
+                                placeholder="例如：亮度太高、希望更自然、饱和度降低一点",
+                                lines=3,
+                            )
+                            prefer_large_model = gr.Checkbox(
+                                label="🚀 使用更强的AI模型重新分析 (LLaVA-1.6-13B)",
+                                value=False,
+                                info="当前模型达不到要求时可勾选"
+                            )
+                            submit_feedback_btn = gr.Button("提交点评并生成迭代建议 💬", variant="secondary")
+                            feedback_response = gr.Textbox(
+                                label="AI迭代建议",
+                                lines=6,
+                                interactive=False,
+                            )
+                            memory_display = gr.Textbox(
+                                label="🧠 用户偏好记忆库",
+                                lines=5,
+                                interactive=False,
+                            )
+                        with gr.Tab("重新生成"):
+                            with gr.Row():
+                                regenerate_btn = gr.Button("基于点评重新生成并刷新预览 🔄", variant="primary")
+                                export_report_btn = gr.Button("导出完整报告 📄")
+                            regenerate_output = gr.Textbox(
+                                label="重新生成结果",
+                                lines=4,
+                                interactive=False
+                            )
                 
                 # ==================== 新增部分结束 ====================
 
@@ -1846,6 +2025,9 @@ def build_ui():
                 output_check,
                 versions_display,
                 session_id_state,
+                solution_preview_gallery,
+                target_solution,
+                memory_display,
             ],
         )
 
@@ -1887,8 +2069,28 @@ def build_ui():
         # 提交反馈回调
         submit_feedback_btn.click(
             fn=_handle_feedback_submission,
-            inputs=[session_id_state, feedback_text, target_solution, prefer_large_model],
-            outputs=[feedback_response, regenerate_output],
+            inputs=[session_id_state, feedback_text, target_solution, feedback_sentiment, prefer_large_model],
+            outputs=[feedback_response, regenerate_output, memory_display],
+        )
+        
+        regenerate_btn.click(
+            fn=_regenerate_from_feedback,
+            inputs=[
+                session_id_state,
+                style_choice,
+                enable_manual_retouch,
+                skin_smooth,
+                skin_whiten,
+                acne_remove,
+                blush,
+                eye_brighten,
+                lip_tint,
+                slim_face,
+                eye_enlarge,
+                nose_slim,
+                chin_refine,
+            ],
+            outputs=[regenerate_output, versions_display, solution_preview_gallery, target_solution, memory_display],
         )
         
         # 导出报告回调
