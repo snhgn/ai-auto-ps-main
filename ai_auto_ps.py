@@ -460,7 +460,7 @@ def _build_analysis_reason(
     strategy = getattr(analysis, "strategy", "unknown")
     selected_style = getattr(analysis, "selected_style", "unknown")
     raw_description = getattr(analysis, "raw_description", None) or getattr(analysis, "description", "")
-    description = _sanitize_analysis_text(_extract_text_from_model_output(raw_description)) or "无可用模型描述"
+    description = _sanitize_analysis_text(_extract_text_from_model_output(raw_description)) or "暂无可用模型描述"
     base = (
         f"strategy={strategy} | selected_style={selected_style} | "
         f"description={description} | retouch={summarize_retouch_controls(retouch_controls)}"
@@ -1647,7 +1647,11 @@ def build_ui():
                     manager = get_manager()
                     session_id = str(uuid.uuid4())
                     session = manager.create_session(session_id, first_image_path)
-                    session.analysis_reasoning = _build_analysis_reason(analysis, retouch_controls)
+                    session.analysis_reasoning = _build_analysis_reason(
+                        analysis,
+                        retouch_controls,
+                        src_name=Path(first_image_path).name,
+                    )
 
                     for sol in solutions:
                         manager.add_version(
