@@ -1307,6 +1307,8 @@ def normalize_uploaded_file_paths(file_obj: Any) -> List[str]:
         if item is None:
             continue
         if isinstance(item, dict):
+            # Gradio FileData-like payloads expose the resolved temporary path in `path`.
+            # `name` is used only as a compatibility fallback when `path` is absent.
             if "path" in item:
                 raw_path = item.get("path")
             else:

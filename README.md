@@ -155,6 +155,7 @@ start.bat debug
 - `AI_AUTO_PS_OPEN_BROWSER`（默认 `1`，设为 `0` 时不自动打开浏览器）
 - `AI_AUTO_PS_USE_LARGE_MODEL`（默认 `0`，设为 `1` 时使用更强的LLaVA模型）
 - `AI_AUTO_PS_FORCE_PIP`（默认 `0`，设为 `1` 时强制重装依赖）
+- `AI_AUTO_PS_BOOTSTRAP_PIP`（默认 `0`，设为 `1` 时升级 `pip/setuptools/wheel`，适用于需要重建安装工具链的场景）
 
 ## 双轮完整性检查
 

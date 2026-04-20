@@ -71,6 +71,7 @@ if not exist ".venv\.deps_ready" (
 
 :install_deps
 echo [INFO] 检查并安装依赖...
+REM 默认跳过 pip/setuptools/wheel 升级以减少冷启动耗时；仅在需要时设置 AI_AUTO_PS_BOOTSTRAP_PIP=1
 if "%AI_AUTO_PS_BOOTSTRAP_PIP%"=="1" (
     echo [INFO] 升级 pip/setuptools/wheel...
     "%VENV_PY%" -m pip install --upgrade pip setuptools wheel --disable-pip-version-check -q
