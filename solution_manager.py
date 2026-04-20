@@ -8,6 +8,21 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import json
 
+BRIGHTNESS_LOWER_MIN = 0.85
+BRIGHTNESS_LOWER_MULTIPLIER = 0.92
+BRIGHTNESS_HIGHER_MAX = 1.20
+BRIGHTNESS_HIGHER_MULTIPLIER = 1.08
+
+SATURATION_LOWER_MIN = 0.80
+SATURATION_LOWER_MULTIPLIER = 0.90
+SATURATION_HIGHER_MAX = 1.35
+SATURATION_HIGHER_MULTIPLIER = 1.10
+
+NATURAL_STYLE_CONTRAST_MIN = 1.0
+NATURAL_STYLE_CONTRAST_MULTIPLIER = 0.90
+NATURAL_STYLE_COLOR_MIN = 0.90
+NATURAL_STYLE_COLOR_MULTIPLIER = 0.92
+
 
 @dataclass
 class SolutionVersion:
@@ -312,19 +327,19 @@ class SolutionManager:
         
         if brightness_pref:
             if brightness_pref.value == "lower":
-                adjusted["brightness"] = max(0.85, adjusted.get("brightness", 1.0) * 0.92)
+                adjusted["brightness"] = max(BRIGHTNESS_LOWER_MIN, adjusted.get("brightness", 1.0) * BRIGHTNESS_LOWER_MULTIPLIER)
             elif brightness_pref.value == "higher":
-                adjusted["brightness"] = min(1.20, adjusted.get("brightness", 1.0) * 1.08)
+                adjusted["brightness"] = min(BRIGHTNESS_HIGHER_MAX, adjusted.get("brightness", 1.0) * BRIGHTNESS_HIGHER_MULTIPLIER)
         
         if saturation_pref:
             if saturation_pref.value == "lower":
-                adjusted["color"] = max(0.80, adjusted.get("color", 1.0) * 0.90)
+                adjusted["color"] = max(SATURATION_LOWER_MIN, adjusted.get("color", 1.0) * SATURATION_LOWER_MULTIPLIER)
             elif saturation_pref.value == "higher":
-                adjusted["color"] = min(1.35, adjusted.get("color", 1.0) * 1.10)
+                adjusted["color"] = min(SATURATION_HIGHER_MAX, adjusted.get("color", 1.0) * SATURATION_HIGHER_MULTIPLIER)
         
         if style_pref and style_pref.value == "natural" and solution_name in {"cinematic_grade", "contrast_pop"}:
-            adjusted["contrast"] = max(1.0, adjusted.get("contrast", 1.0) * 0.90)
-            adjusted["color"] = max(0.90, adjusted.get("color", 1.0) * 0.92)
+            adjusted["contrast"] = max(NATURAL_STYLE_CONTRAST_MIN, adjusted.get("contrast", 1.0) * NATURAL_STYLE_CONTRAST_MULTIPLIER)
+            adjusted["color"] = max(NATURAL_STYLE_COLOR_MIN, adjusted.get("color", 1.0) * NATURAL_STYLE_COLOR_MULTIPLIER)
         
         return adjusted
     

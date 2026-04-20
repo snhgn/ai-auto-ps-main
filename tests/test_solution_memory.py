@@ -5,7 +5,7 @@ from solution_manager import SolutionManager
 
 
 class SolutionMemoryTests(unittest.TestCase):
-    def test_preference_memory_conflict_uses_latest_timestamp(self):
+    def test_preference_memory_overwrites_existing_key_with_latest_timestamp(self):
         manager = SolutionManager()
         manager.update_preference_memory(
             {"brightness": "higher"},
@@ -22,7 +22,10 @@ class SolutionMemoryTests(unittest.TestCase):
 
     def test_apply_memory_preferences_adjusts_style_values(self):
         manager = SolutionManager()
-        manager.update_preference_memory({"brightness": "lower", "saturation": "lower", "style": "natural"}, "偏好自然")
+        manager.update_preference_memory(
+            {"brightness": "lower", "saturation": "lower", "style": "natural"},
+            source_feedback="偏好自然",
+        )
         adjusted = manager.apply_memory_preferences(
             {"brightness": 1.1, "contrast": 1.2, "color": 1.2},
             solution_name="cinematic_grade",

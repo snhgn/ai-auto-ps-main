@@ -287,6 +287,21 @@ STYLE_HINTS: Dict[str, str] = {
     "dish": "food_fresh",
 }
 
+NIGHT_BRIGHTNESS_THRESHOLD = 0.28
+BRIGHT_LANDSCAPE_THRESHOLD = 0.75
+
+PREFERENCE_BRIGHTNESS_LOWER_KEYWORDS = ("太亮", "过曝", "刺眼", "too bright")
+PREFERENCE_BRIGHTNESS_HIGHER_KEYWORDS = ("太暗", "偏暗", "提亮", "too dark")
+PREFERENCE_SATURATION_LOWER_KEYWORDS = ("太艳", "太饱和", "过饱和", "oversaturated")
+PREFERENCE_SATURATION_HIGHER_KEYWORDS = ("不够鲜艳", "太灰", "发灰", "desaturated")
+
+NEGATIVE_STYLE_INTENSITY_MULTIPLIER = 0.88
+NEGATIVE_STYLE_MIN_INTENSITY = 0.45
+NEGATIVE_STYLE_CONTRAST_MULTIPLIER = 0.92
+NEGATIVE_STYLE_CONTRAST_MIN = 1.0
+NEGATIVE_STYLE_COLOR_MULTIPLIER = 0.90
+NEGATIVE_STYLE_COLOR_MIN = 0.85
+
 
 @dataclass
 class AnalysisResult:
@@ -433,9 +448,9 @@ def _merge_collaborative_style(primary_style: str, secondary_style: str, image: 
         return primary_style
     arr = np.asarray(image.convert("RGB"), dtype=np.float32)
     brightness = float(arr.mean()) / 255.0
-    if brightness < 0.28:
+    if brightness < NIGHT_BRIGHTNESS_THRESHOLD:
         return "night_clarity"
-    if brightness > 0.75 and secondary_style == "landscape_vivid":
+    if brightness > BRIGHT_LANDSCAPE_THRESHOLD and secondary_style == "landscape_vivid":
         return secondary_style
     return primary_style
 
@@ -1549,13 +1564,13 @@ def build_ui():
     def _extract_preferences_from_feedback(feedback_text: str, feedback_sentiment: str) -> Dict[str, str]:
         lowered = (feedback_text or "").lower()
         preferences: Dict[str, str] = {}
-        if any(word in lowered for word in ["太亮", "过曝", "刺眼", "too bright"]):
+        if any(word in lowered for word in PREFERENCE_BRIGHTNESS_LOWER_KEYWORDS):
             preferences["brightness"] = "lower"
-        elif any(word in lowered for word in ["太暗", "偏暗", "提亮", "too dark"]):
+        elif any(word in lowered for word in PREFERENCE_BRIGHTNESS_HIGHER_KEYWORDS):
             preferences["brightness"] = "higher"
-        if any(word in lowered for word in ["太艳", "太饱和", "过饱和", "oversaturated"]):
+        if any(word in lowered for word in PREFERENCE_SATURATION_LOWER_KEYWORDS):
             preferences["saturation"] = "lower"
-        elif any(word in lowered for word in ["不够鲜艳", "太灰", "发灰", "desaturated"]):
+        elif any(word in lowered for word in PREFERENCE_SATURATION_HIGHER_KEYWORDS):
             preferences["saturation"] = "higher"
         if "自然" in lowered:
             preferences["style"] = "natural"
@@ -1650,9 +1665,15 @@ def build_ui():
             intensity = sol.intensity
             if latest_feedback and latest_feedback.sentiment == "negative":
                 if sol.name in {"contrast_pop", "cinematic_grade", "vibrance_boost"}:
-                    intensity = max(0.45, intensity * 0.88)
-                    style_adjustments["contrast"] = max(1.0, style_adjustments.get("contrast", 1.0) * 0.92)
-                    style_adjustments["color"] = max(0.85, style_adjustments.get("color", 1.0) * 0.90)
+                    intensity = max(NEGATIVE_STYLE_MIN_INTENSITY, intensity * NEGATIVE_STYLE_INTENSITY_MULTIPLIER)
+                    style_adjustments["contrast"] = max(
+                        NEGATIVE_STYLE_CONTRAST_MIN,
+                        style_adjustments.get("contrast", 1.0) * NEGATIVE_STYLE_CONTRAST_MULTIPLIER,
+                    )
+                    style_adjustments["color"] = max(
+                        NEGATIVE_STYLE_COLOR_MIN,
+                        style_adjustments.get("color", 1.0) * NEGATIVE_STYLE_COLOR_MULTIPLIER,
+                    )
             adjusted.append(
                 SolutionVariant(
                     name=sol.name,
