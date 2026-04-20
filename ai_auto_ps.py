@@ -1370,7 +1370,7 @@ def process_uploaded_files(
         after_gallery.append((output_path, f"结果: {src_name} -> {analysis.selected_style}"))
         style_lines.append(f"{src_name}: {analysis.selected_style}")
         reason_lines.append(
-            f"{src_name} | strategy={analysis.strategy} | description={analysis.description} | "
+            f"{src_name} | strategy={analysis.strategy} | description={analysis.raw_description} | "
             f"retouch={summarize_retouch_controls(retouch_controls)}"
         )
 
