@@ -7,6 +7,8 @@ from unittest.mock import patch
 from ai_auto_ps import (
     RETOUCH_CONTROL_KEYS,
     RETOUCH_PROFILE_PRESETS,
+    _build_analysis_reason,
+    _extract_text_from_model_output,
     _apply_style_to_frame,
     apply_style_to_pil,
     get_retouch_profile_values,
@@ -31,6 +33,20 @@ except ImportError:  # pragma: no cover
 
 
 class StyleRoutingTests(unittest.TestCase):
+    def test_extract_text_from_nested_model_output(self):
+        payload = [{"generated_text": [{"role": "assistant", "content": "清晰的人像照片"}]}]
+        self.assertIn("清晰的人像照片", _extract_text_from_model_output(payload))
+
+    def test_build_analysis_reason_sanitizes_control_chars(self):
+        fake_analysis = SimpleNamespace(
+            selected_style="portrait_soft",
+            strategy="llm",
+            raw_description="portrait\x00\nperson",
+        )
+        reason = _build_analysis_reason(fake_analysis, {"skin_smooth": 0.6}, src_name="demo.jpg")
+        self.assertIn("demo.jpg | strategy=llm", reason)
+        self.assertIn("description=portrait person", reason)
+
     def test_landscape_keywords_route_to_vivid_style(self):
         self.assertEqual(
             choose_style_from_description("A mountain landscape with blue sky"),

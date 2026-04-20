@@ -368,7 +368,9 @@ class LightweightStyleAdvisor:
             try:
                 result = self._captioner(image)
                 if result and isinstance(result, list):
-                    description = str(result[0].get("generated_text", ""))
+                    description = _sanitize_analysis_text(
+                        _extract_text_from_model_output(result[0].get("generated_text", ""))
+                    )
             except Exception:
                 description = ""
 
@@ -413,6 +415,57 @@ def choose_style_from_description(description: str) -> str:
         if hint in lowered:
             return style
     return "clean_natural"
+
+
+def _extract_text_from_model_output(payload: Any) -> str:
+    if payload is None:
+        return ""
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, bytes):
+        for encoding in ("utf-8", "gb18030", "latin-1"):
+            try:
+                return payload.decode(encoding)
+            except Exception:
+                continue
+        return str(payload)
+    if isinstance(payload, dict):
+        for key in ("generated_text", "text", "content", "caption", "answer"):
+            if key in payload:
+                text = _extract_text_from_model_output(payload.get(key))
+                if text:
+                    return text
+        return str(payload)
+    if isinstance(payload, (list, tuple)):
+        parts: List[str] = []
+        for item in payload:
+            text = _extract_text_from_model_output(item)
+            if text:
+                parts.append(text)
+        return " ".join(parts)
+    return str(payload)
+
+
+def _sanitize_analysis_text(text: str) -> str:
+    normalized = str(text or "").replace("\x00", " ")
+    normalized = "".join(ch if ch.isprintable() else " " for ch in normalized)
+    return " ".join(normalized.split())
+
+
+def _build_analysis_reason(
+    analysis: Any,
+    retouch_controls: Optional[Dict[str, float]],
+    src_name: Optional[str] = None,
+) -> str:
+    strategy = getattr(analysis, "strategy", "unknown")
+    selected_style = getattr(analysis, "selected_style", "unknown")
+    raw_description = getattr(analysis, "raw_description", None) or getattr(analysis, "description", "")
+    description = _sanitize_analysis_text(_extract_text_from_model_output(raw_description)) or "暂无可用模型描述"
+    base = (
+        f"strategy={strategy} | selected_style={selected_style} | "
+        f"description={description} | retouch={summarize_retouch_controls(retouch_controls)}"
+    )
+    return f"{src_name} | {base}" if src_name else base
 
 
 def _convert_to_enhanced(basic: AnalysisResult, description: str = "") -> EnhancedAnalysisResult:
@@ -1352,11 +1405,7 @@ def process_uploaded_files(
             skip_type_check=True,
             retouch_controls=retouch_controls,
         )
-        reason = (
-            f"Model: {MODEL_NAME} | Strategy: {analysis.strategy} | "
-            f"Description: {analysis.description} | Selected style: {analysis.selected_style} | "
-            f"Retouch: {summarize_retouch_controls(retouch_controls)}"
-        )
+        reason = _build_analysis_reason(analysis, retouch_controls)
         return [str(output_path)], [], [], analysis.selected_style, reason, double_check_implementation()
 
     output_paths: List[str] = []
@@ -1380,10 +1429,7 @@ def process_uploaded_files(
         before_gallery.append(path)
         after_gallery.append(output_path_str)
         style_lines.append(f"{src_name}: {analysis.selected_style}")
-        reason_lines.append(
-            f"{src_name} | strategy={analysis.strategy} | description={analysis.raw_description} | "
-            f"retouch={summarize_retouch_controls(retouch_controls)}"
-        )
+        reason_lines.append(_build_analysis_reason(analysis, retouch_controls, src_name=src_name))
 
     return (
         output_paths,
@@ -1581,7 +1627,49 @@ def build_ui():
         except Exception as exc:
             raise gr.Error(str(exc)) from exc
 
-        return result
+        versions_text = "当前上传结果未生成多版本详情"
+        session_id = ""
+
+        if HAS_MULTI_SOLUTION and HAS_SOLUTION_MANAGER:
+            try:
+                first_image_path = next((p for p in file_paths if detect_media_type(p) == "image"), None)
+                if first_image_path and Image is not None:
+                    with Image.open(first_image_path) as image:
+                        image = image.convert("RGB")
+                        analysis = get_advisor().analyze(image, requested_style=style_name)
+
+                    if not isinstance(analysis, EnhancedAnalysisResult):
+                        analysis = _convert_to_enhanced(analysis, getattr(analysis, "description", ""))
+
+                    solutions = generate_multiple_solutions(analysis, max_solutions=4)
+                    versions_text = _format_solutions_for_display(solutions)
+
+                    manager = get_manager()
+                    session_id = str(uuid.uuid4())
+                    session = manager.create_session(session_id, first_image_path)
+                    session.analysis_reasoning = _build_analysis_reason(
+                        analysis,
+                        retouch_controls,
+                        src_name=Path(first_image_path).name,
+                    )
+
+                    for sol in solutions:
+                        manager.add_version(
+                            session_id=session_id,
+                            solution_name=sol.name,
+                            display_name=sol.display_name,
+                            description=sol.description,
+                            reasoning=sol.reasoning,
+                            intensity=sol.intensity,
+                            style_adjustments=sol.style_adjustments,
+                            retouch_overrides=sol.retouch_overrides,
+                        )
+                elif not first_image_path:
+                    versions_text = "当前输入包含视频，暂不支持多版本对比。"
+            except Exception as exc:
+                versions_text = f"生成多版本详情失败: {exc}"
+
+        return (*result, versions_text, session_id)
 
     with gr.Blocks(title="AI Auto PS") as demo:
         with gr.Column(elem_id="header"):
@@ -1749,7 +1837,16 @@ def build_ui():
                 nose_slim,
                 chin_refine,
             ],
-            outputs=[output_files, before_preview, after_preview, output_style, output_reason, output_check],
+            outputs=[
+                output_files,
+                before_preview,
+                after_preview,
+                output_style,
+                output_reason,
+                output_check,
+                versions_display,
+                session_id_state,
+            ],
         )
 
         retouch_profile.change(
