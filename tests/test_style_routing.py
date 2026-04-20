@@ -112,6 +112,7 @@ class StyleRoutingTests(unittest.TestCase):
             process_uploaded_files([])
 
     def test_process_uploaded_files_stringifies_path_outputs(self):
+        fake_output = Path("out.jpg")
         fake_analysis = SimpleNamespace(
             selected_style="portrait_soft",
             strategy="auto",
@@ -120,13 +121,13 @@ class StyleRoutingTests(unittest.TestCase):
         with (
             patch("ai_auto_ps.get_advisor", return_value=object()),
             patch("ai_auto_ps.detect_media_type", return_value="image"),
-            patch("ai_auto_ps.process_image_file", return_value=(Path("C:/tmp/out.jpg"), fake_analysis)),
+            patch("ai_auto_ps.process_image_file", return_value=(fake_output, fake_analysis)),
             patch("ai_auto_ps.double_check_implementation", return_value="ok"),
         ):
             outputs, before, after, styles, reason, check = process_uploaded_files(["demo.jpg"], "auto")
 
-        self.assertEqual(outputs, ["C:/tmp/out.jpg"])
-        self.assertEqual(after, ["C:/tmp/out.jpg"])
+        self.assertEqual(outputs, [str(fake_output)])
+        self.assertEqual(after, [str(fake_output)])
         self.assertEqual(before, ["demo.jpg"])
         self.assertIn("demo.jpg: portrait_soft", styles)
         self.assertIn("strategy=auto", reason)
