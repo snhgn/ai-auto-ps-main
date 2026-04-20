@@ -6,6 +6,7 @@ import socket
 import tempfile
 import threading
 import importlib.util
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
@@ -26,6 +27,28 @@ try:
     import cv2
 except ImportError:  # pragma: no cover - optional dependency
     cv2 = None
+
+try:
+    from multi_solution_generator import (
+        EnhancedAnalysisResult,
+        SolutionVariant,
+        generate_multiple_solutions,
+        get_solution_by_name,
+        solutions_to_ui_format,
+    )
+    HAS_MULTI_SOLUTION = True
+except ImportError:
+    HAS_MULTI_SOLUTION = False
+
+try:
+    from solution_manager import (
+        SolutionSession,
+        UserFeedback,
+        get_manager,
+    )
+    HAS_SOLUTION_MANAGER = True
+except ImportError:
+    HAS_SOLUTION_MANAGER = False
 
 
 MODEL_NAME = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
@@ -291,11 +314,25 @@ class LightweightStyleAdvisor:
             return
         try:
             from transformers import pipeline
-
-            self._captioner = pipeline(
-                task="image-to-text",
-                model=MODEL_NAME,
-            )
+            
+            # 尝试加载更强的模型（如果启用）
+            use_large = os.getenv("AI_AUTO_PS_USE_LARGE_MODEL", "0").lower() in {"1", "true", "yes"}
+            model_name = "llava-hf/llava-1.5-13b-hf" if use_large else MODEL_NAME
+            
+            try:
+                self._captioner = pipeline(
+                    task="image-to-text",
+                    model=model_name,
+                )
+                self._model_type = "llava" if use_large else "smolvlm2"
+            except Exception:
+                # Fallback to SmolVLM2 if LLaVA not available
+                self._captioner = pipeline(
+                    task="image-to-text",
+                    model=MODEL_NAME,
+                )
+                self._model_type = "smolvlm2"
+                
         except Exception as exc:  # pragma: no cover - runtime fallback
             self._init_error = str(exc)
 
@@ -313,13 +350,16 @@ class LightweightStyleAdvisor:
             return "high-color landscape photo"
         return "portrait person photo"
 
-    def analyze(self, image: "Image.Image", requested_style: str) -> AnalysisResult:
+    def analyze(self, image: "Image.Image", requested_style: str) -> AnalysisResult | EnhancedAnalysisResult:
         if requested_style != "auto":
-            return AnalysisResult(
+            result = AnalysisResult(
                 description="manual style selected",
                 selected_style=requested_style,
                 strategy="manual",
             )
+            if HAS_MULTI_SOLUTION:
+                return _convert_to_enhanced(result)
+            return result
 
         self._load_model_if_needed()
         description = ""
@@ -337,7 +377,13 @@ class LightweightStyleAdvisor:
 
         style = choose_style_from_description(description)
         strategy = "llm" if self._captioner is not None else "heuristic_fallback"
-        return AnalysisResult(description=description, selected_style=style, strategy=strategy)
+        
+        basic_result = AnalysisResult(description=description, selected_style=style, strategy=strategy)
+        
+        if HAS_MULTI_SOLUTION:
+            return _convert_to_enhanced(basic_result, description)
+        
+        return basic_result
 
 
 _ADVISOR_INSTANCE: Optional[LightweightStyleAdvisor] = None
@@ -367,6 +413,59 @@ def choose_style_from_description(description: str) -> str:
         if hint in lowered:
             return style
     return "clean_natural"
+
+
+def _convert_to_enhanced(basic: AnalysisResult, description: str = "") -> EnhancedAnalysisResult:
+    """将基础分析结果转换为增强格式"""
+    if not description:
+        description = basic.description
+    
+    lowered = description.lower()
+    scene = "portrait"  # 默认
+    
+    if any(w in lowered for w in ["landscape", "mountain", "sky", "outdoor", "river", "forest"]):
+        scene = "landscape"
+    elif any(w in lowered for w in ["food", "dish", "meal", "restaurant", "cake", "fruit"]):
+        scene = "food"
+    elif any(w in lowered for w in ["night", "dark", "street", "city", "urban"]):
+        scene = "night"
+    elif any(w in lowered for w in ["product", "item", "object", "good"]):
+        scene = "product"
+    
+    # 提取subjects
+    subjects = []
+    if any(w in lowered for w in ["person", "people", "human", "face", "portrait", "head"]):
+        subjects.extend(["person", "face"])
+    elif any(w in lowered for w in ["landscape", "nature", "scene"]):
+        subjects.append("landscape")
+    
+    # 估算lighting
+    lighting = {
+        "brightness": 0.5,
+        "direction": "neutral",
+    }
+    
+    # 推荐方向
+    recommended_dirs = []
+    if "person" in subjects or "face" in subjects:
+        recommended_dirs = ["skin_tone", "portrait_retouch"]
+    elif scene == "landscape":
+        recommended_dirs = ["vibrance", "contrast"]
+    elif scene == "food":
+        recommended_dirs = ["vibrance", "detail"]
+    else:
+        recommended_dirs = ["color_correction"]
+    
+    return EnhancedAnalysisResult(
+        raw_description=description,
+        scene=scene,
+        subjects=subjects,
+        lighting=lighting,
+        color_profile={},
+        recommended_directions=recommended_dirs,
+        selected_style=basic.selected_style,
+        strategy=basic.strategy,
+    )
 
 
 def describe_supported_formats() -> str:
@@ -488,17 +587,26 @@ def _build_output_path(src: Path, style_name: str, extension: str) -> Path:
 
 def apply_style_to_pil(
     image: "Image.Image",
-    style_name: str,
+    style_name: Optional[str] = None,
     retouch_controls: Optional[Dict[str, float]] = None,
+    style_values: Optional[Dict[str, float]] = None,
 ) -> "Image.Image":
     if ImageEnhance is None:
         raise RuntimeError("Pillow is required for image processing.")
 
-    values = _resolve_style_values(style_name, retouch_controls=retouch_controls, for_video=False)
-    out = ImageEnhance.Brightness(image).enhance(values["brightness"])
-    out = ImageEnhance.Contrast(out).enhance(values["contrast"])
-    out = ImageEnhance.Color(out).enhance(values["color"])
-    return _apply_advanced_retouch_to_pil(out, values)
+    if style_values is None:
+        style_values = _resolve_style_values(style_name or "clean_natural", retouch_controls=retouch_controls, for_video=False)
+    else:
+        # 如果提供了style_values，仅混合置提提供的retouch_controls
+        full_values = style_values.copy()
+        if retouch_controls:
+            full_values.update(retouch_controls)
+        style_values = full_values
+    
+    out = ImageEnhance.Brightness(image).enhance(style_values["brightness"])
+    out = ImageEnhance.Contrast(out).enhance(style_values["contrast"])
+    out = ImageEnhance.Color(out).enhance(style_values["color"])
+    return _apply_advanced_retouch_to_pil(out, style_values)
 
 
 def _get_face_cascade():
@@ -1020,7 +1128,8 @@ def process_image_file(
     requested_style: str,
     skip_type_check: bool = False,
     retouch_controls: Optional[Dict[str, float]] = None,
-) -> Tuple[str, AnalysisResult]:
+    solutions: Optional[list] = None,
+) -> Tuple[str, AnalysisResult] | Tuple[Dict[str, str], EnhancedAnalysisResult]:
     if Image is None:
         raise RuntimeError("Pillow is required. Install pillow to process images.")
 
@@ -1032,13 +1141,38 @@ def process_image_file(
         with Image.open(src) as image:
             image = image.convert("RGB")
             analysis = advisor.analyze(image, requested_style=requested_style)
-            styled = apply_style_to_pil(image, analysis.selected_style, retouch_controls=retouch_controls)
     except UnidentifiedImageError as exc:
         raise RuntimeError(f"Unable to decode image file: {src.name}") from exc
 
-    output_path = _build_output_path(src, analysis.selected_style, ".jpg")
-    styled.save(output_path, format="JPEG", quality=95)
-    return str(output_path), analysis
+    # 如果没有指定多方案，走原有单方案流程
+    if solutions is None:
+        try:
+            styled = apply_style_to_pil(image, analysis.selected_style, retouch_controls=retouch_controls)
+        except UnidentifiedImageError as exc:
+            raise RuntimeError(f"Unable to decode image file: {src.name}") from exc
+        
+        output_path = _build_output_path(src, analysis.selected_style, ".jpg")
+        styled.save(output_path, format="JPEG", quality=95)
+        return output_path, analysis
+    
+    # 多方案处理
+    output_dict = {}
+    for solution in solutions:
+        style_vals = solution.style_adjustments.copy()
+        
+        # 合并精修参数
+        retouch = dict(retouch_controls or {})
+        retouch.update(solution.retouch_overrides)
+        
+        # 应用方案
+        styled = apply_style_to_pil(image, style_name=None, retouch_controls=retouch, style_values=style_vals)
+        
+        # 保存
+        output_path = _build_output_path(src, solution.name, ".jpg")
+        styled.save(output_path, format="JPEG", quality=95)
+        output_dict[solution.name] = output_path
+    
+    return output_dict, analysis
 
 
 def _apply_style_to_frame(
@@ -1317,6 +1451,87 @@ def build_ui():
         values = get_retouch_profile_values(profile_name)
         return tuple(values.get(key, 0.0) for key in RETOUCH_CONTROL_KEYS)
 
+    def _format_solutions_for_display(solutions: List[SolutionVariant]) -> str:
+        """将多个方案格式化为易读的文本展示"""
+        if not solutions:
+            return "未生成任何方案"
+        
+        display = "📋 AI 推荐的修图方案（共 {} 个）:\n\n".format(len(solutions))
+        for i, sol in enumerate(solutions, 1):
+            display += f"【方案 {i}】{sol.display_name}\n"
+            display += f"  • 描述: {sol.description}\n"
+            display += f"  • 理由: {sol.reasoning}\n"
+            display += f"  • 强度: {sol.intensity:.0%}\n"
+            display += "\n"
+        
+        return display
+    
+    def _create_version_comparison_html(versions: List) -> str:
+        """为多个版本创建对比HTML"""
+        if not versions:
+            return "<p>暂无版本可对比</p>"
+        
+        html = "<div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;'>\n"
+        for i, ver in enumerate(versions, 1):
+            html += f"""
+            <div style='border: 1px solid #ddd; padding: 15px; border-radius: 8px;'>
+                <h3>版本 {i}: {ver.get('display_name', '未命名')}</h3>
+                <p><strong>方案:</strong> {ver.get('solution_name', 'N/A')}</p>
+                <p><strong>强度:</strong> {ver.get('intensity', 0):.0%}</p>
+                <p><strong>生成轮次:</strong> {ver.get('generation_round', 1)}</p>
+                <p><strong>理由:</strong><br/>{ver.get('reasoning', '无')}</p>
+            </div>
+            """
+        html += "</div>"
+        return html
+    
+    def _handle_feedback_submission(
+        session_id_state: str,
+        feedback_text: str,
+        target_solution: str,
+        prefer_large_model: bool,
+    ) -> Tuple[str, str]:
+        """处理用户反馈，返回确认信息和迭代建议"""
+        if not HAS_SOLUTION_MANAGER:
+            return "error", "解决方案管理器不可用"
+        
+        try:
+            manager = get_manager()
+            if not session_id_state or session_id_state not in manager.sessions:
+                return "error", "找不到会话，请重新上传图片"
+            
+            # 分析反馈情感
+            sentiment = "neutral"
+            if any(word in feedback_text.lower() for word in ["好", "很棒", "满意", "完美"]):
+                sentiment = "positive"
+            elif any(word in feedback_text.lower() for word in ["不好", "差", "不满意", "太"]):
+                sentiment = "negative"
+            
+            # 添加反馈
+            manager.add_feedback(
+                session_id_state,
+                feedback_text=feedback_text,
+                target_solution=target_solution,
+                sentiment=sentiment,
+                prefer_stronger_model=prefer_large_model,
+            )
+            
+            # 生成迭代建议
+            suggestions = manager.get_iteration_suggestions(session_id_state)
+            
+            confirm_msg = f"✅ 反馈已记录！共 {len(manager.sessions[session_id_state].feedbacks)} 条反馈"
+            suggestions_text = "## 迭代建议\n\n"
+            for key, value in suggestions.items():
+                suggestions_text += f"**{key}**: {value}\n\n"
+            
+            if not suggestions:
+                suggestions_text += "继续上传反馈以获得更多优化建议"
+            
+            return confirm_msg, suggestions_text
+            
+        except Exception as e:
+            return "error", f"处理反馈时出错: {str(e)}"
+
     def _handle_upload(
         file_obj,
         style_name,
@@ -1438,6 +1653,73 @@ def build_ui():
                 with gr.Accordion("🛡️ 系统运行诊断 (高级)", open=False):
                     output_check = gr.Textbox(label="双轮完整性检查状态", lines=1)
                     gr.Markdown(f"**当前环境支持格式:**\n`{describe_supported_formats()}`")
+                
+                # ==================== 新增：多版本对比和用户反馈部分 ====================
+                with gr.Accordion("🎨 多版本对比与反馈（新功能）", open=False):
+                    gr.Markdown("**对多个修图版本进行对比，提供反馈以获得更符合你想法的版本**")
+                    
+                    # 隐藏的会话ID状态
+                    session_id_state = gr.State(value="")
+                    
+                    with gr.Group():
+                        gr.Markdown("### 版本详情")
+                        versions_display = gr.Textbox(
+                            label="📋 生成的修图方案详情",
+                            lines=10,
+                            interactive=False,
+                            info="展示AI生成的所有方案和推荐理由"
+                        )
+                    
+                    with gr.Group():
+                        gr.Markdown("### 用户反馈")
+                        with gr.Row():
+                            target_solution = gr.Dropdown(
+                                choices=["color_correction", "skin_tone_enhance", "contrast_pop", 
+                                        "vibrance_boost", "portrait_retouch", "cinematic_grade", "detail_sharpen"],
+                                value="color_correction",
+                                label="目标方案",
+                                info="选择你要反馈的修图方案"
+                            )
+                            feedback_sentiment = gr.Radio(
+                                choices=["满意 👍", "一般 🤷", "不满意 👎"],
+                                value="一般 🤷",
+                                label="你的评价"
+                            )
+                        
+                        feedback_text = gr.Textbox(
+                            label="反馈内容",
+                            placeholder="请告诉AI你的想法，例如：'亮度太高了' 或 '我想要更自然的风格'",
+                            lines=3,
+                        )
+                        
+                        prefer_large_model = gr.Checkbox(
+                            label="🚀 使用更强的AI模型重新分析 (LLaVA-1.6-13B)",
+                            value=False,
+                            info="当前模型达不到要求时，勾选此选项使用更强大但更慢的模型"
+                        )
+                        
+                        submit_feedback_btn = gr.Button("提交反馈并获得迭代建议 💬", variant="secondary")
+                        
+                        feedback_response = gr.Textbox(
+                            label="AI迭代建议",
+                            lines=6,
+                            interactive=False,
+                            info="基于你的反馈，AI给出的优化建议"
+                        )
+                    
+                    with gr.Group():
+                        gr.Markdown("### 迭代生成")
+                        with gr.Row():
+                            regenerate_btn = gr.Button("基于反馈重新生成方案 🔄", variant="primary")
+                            export_report_btn = gr.Button("导出完整报告 📄")
+                        
+                        regenerate_output = gr.Textbox(
+                            label="重新生成结果",
+                            lines=4,
+                            interactive=False
+                        )
+                
+                # ==================== 新增部分结束 ====================
 
         run_button.click(
             fn=_handle_upload,
@@ -1492,6 +1774,33 @@ def build_ui():
                 chin_refine,
             ],
         )
+        
+        # ==================== 新增：多版本反馈回调 ====================
+        # 提交反馈回调
+        submit_feedback_btn.click(
+            fn=_handle_feedback_submission,
+            inputs=[session_id_state, feedback_text, target_solution, prefer_large_model],
+            outputs=[feedback_response, regenerate_output],
+        )
+        
+        # 导出报告回调
+        def _export_report(session_id: str) -> str:
+            if not HAS_SOLUTION_MANAGER or not session_id:
+                return "❌ 无可用会话"
+            try:
+                manager = get_manager()
+                report = manager.export_session_report(session_id)
+                return f"✅ 报告已生成:\n\n{report}"
+            except Exception as e:
+                return f"❌ 导出失败: {str(e)}"
+        
+        export_report_btn.click(
+            fn=_export_report,
+            inputs=[session_id_state],
+            outputs=[regenerate_output],
+        )
+        
+        # ==================== 新增回调结束 ====================
 
     return demo
 
