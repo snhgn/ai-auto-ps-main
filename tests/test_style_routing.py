@@ -1,4 +1,5 @@
 import unittest
+import ai_auto_ps
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -68,6 +69,30 @@ class StyleRoutingTests(unittest.TestCase):
     def test_supported_formats_include_expanded_entries(self):
         self.assertIn(".jfif", SUPPORTED_IMAGE_FORMATS)
         self.assertIn(".mts", SUPPORTED_VIDEO_FORMATS)
+
+    def test_enable_heic_support_registers_opener_when_available(self):
+        fake_image = SimpleNamespace(registered_extensions=lambda: {})
+        fake_heif = SimpleNamespace(register_heif_opener=lambda: None)
+        with (
+            patch("ai_auto_ps.Image", fake_image),
+            patch("ai_auto_ps.pillow_heif", fake_heif),
+            patch.object(fake_heif, "register_heif_opener") as register_mock,
+        ):
+            ai_auto_ps._enable_heic_support()
+
+        register_mock.assert_called_once()
+
+    def test_enable_heic_support_skips_when_heic_already_registered(self):
+        fake_image = SimpleNamespace(registered_extensions=lambda: {".heic": "HEIF"})
+        fake_heif = SimpleNamespace(register_heif_opener=lambda: None)
+        with (
+            patch("ai_auto_ps.Image", fake_image),
+            patch("ai_auto_ps.pillow_heif", fake_heif),
+            patch.object(fake_heif, "register_heif_opener") as register_mock,
+        ):
+            ai_auto_ps._enable_heic_support()
+
+        register_mock.assert_not_called()
 
     def test_get_advisor_is_singleton(self):
         self.assertIs(get_advisor(), get_advisor())

@@ -24,6 +24,11 @@ except ImportError:  # pragma: no cover - optional dependency
     UnidentifiedImageError = Exception
 
 try:
+    import pillow_heif
+except ImportError:  # pragma: no cover - optional dependency
+    pillow_heif = None
+
+try:
     import cv2
 except ImportError:  # pragma: no cover - optional dependency
     cv2 = None
@@ -67,6 +72,26 @@ BASE_VIDEO_FORMATS: Set[str] = {
     ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".flv", ".wmv", ".mpeg", ".mpg",
     ".ts", ".m2ts", ".mts", ".3gp", ".3g2", ".ogv", ".ogm", ".asf", ".vob",
 }
+
+
+def _enable_heic_support() -> None:
+    if Image is None:
+        return
+    try:
+        registered = {ext.lower() for ext in Image.registered_extensions().keys()}
+    except Exception:
+        return
+    if ".heic" in registered or ".heif" in registered:
+        return
+    if pillow_heif is None:
+        return
+    try:
+        pillow_heif.register_heif_opener()
+    except Exception:
+        pass
+
+
+_enable_heic_support()
 
 
 def _collect_supported_image_formats() -> Set[str]:
