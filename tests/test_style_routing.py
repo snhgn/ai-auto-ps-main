@@ -94,6 +94,16 @@ class StyleRoutingTests(unittest.TestCase):
 
         register_mock.assert_not_called()
 
+    def test_enable_heic_support_ignores_registration_exception(self):
+        fake_image = SimpleNamespace(registered_extensions=lambda: {})
+        fake_heif = SimpleNamespace(register_heif_opener=lambda: None)
+        with (
+            patch("ai_auto_ps.Image", fake_image),
+            patch("ai_auto_ps.pillow_heif", fake_heif),
+            patch.object(fake_heif, "register_heif_opener", side_effect=RuntimeError("mock error")),
+        ):
+            ai_auto_ps._enable_heic_support()
+
     def test_get_advisor_is_singleton(self):
         self.assertIs(get_advisor(), get_advisor())
 
