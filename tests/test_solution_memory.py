@@ -43,12 +43,44 @@ class SolutionMemoryTests(unittest.TestCase):
     @unittest.skipIf(Image is None, "pillow not installed")
     def test_advisor_analyze_uses_dual_model_strategy(self):
         advisor = LightweightStyleAdvisor()
-        advisor._captioner = lambda image: [{"generated_text": "city night street"}]
+        advisor._captioner = lambda image, **kw: [{"generated_text": "city night street"}]
         advisor._heuristic_description = lambda image: "high-color landscape photo"
         image = Image.new("RGB", (8, 8), (250, 250, 250))
         analysis = advisor.analyze(image, requested_style="auto")
         self.assertEqual(analysis.strategy, "dual_model_collaboration")
         self.assertEqual(analysis.selected_style, "landscape_vivid")
+
+    @unittest.skipIf(Image is None, "pillow not installed")
+    def test_advisor_analyze_attaches_ai_geometry_when_captioner_returns_json(self):
+        geometry_json = '{"rotation": 90, "crop_factor": 0.88, "reason": "tilted"}'
+
+        def _mock_captioner(image, **kw):
+            # Return geometry JSON when geometry prompt is given, else plain description
+            import ai_auto_ps as _m
+            text = kw.get("text", "")
+            if "rotation" in text or "crop_factor" in text:
+                return [{"generated_text": geometry_json}]
+            return [{"generated_text": "portrait person photo"}]
+
+        advisor = LightweightStyleAdvisor()
+        advisor._captioner = _mock_captioner
+        advisor._heuristic_description = lambda image: "portrait person photo"
+        image = Image.new("RGB", (8, 8), (100, 80, 90))
+        analysis = advisor.analyze(image, requested_style="auto")
+        ai_geom = getattr(analysis, "ai_geometry", None)
+        self.assertIsNotNone(ai_geom)
+        self.assertEqual(ai_geom["rotation"], 90.0)
+        self.assertAlmostEqual(ai_geom["crop_factor"], 0.88)
+
+    @unittest.skipIf(Image is None, "pillow not installed")
+    def test_advisor_analyze_falls_back_to_no_geometry_when_captioner_unavailable(self):
+        advisor = LightweightStyleAdvisor()
+        advisor._captioner = None
+        advisor._heuristic_description = lambda image: "portrait person photo"
+        image = Image.new("RGB", (8, 8), (100, 80, 90))
+        analysis = advisor.analyze(image, requested_style="auto")
+        ai_geom = getattr(analysis, "ai_geometry", None)
+        self.assertIsNone(ai_geom)
 
 
 if __name__ == "__main__":

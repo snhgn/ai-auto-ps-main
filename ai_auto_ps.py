@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import mimetypes
 import os
+import re
 import socket
 import tempfile
 import threading
@@ -366,6 +368,29 @@ class LightweightStyleAdvisor:
             return "high-color landscape photo"
         return "portrait person photo"
 
+    def _ask_ai_geometry(self, image: "Image.Image") -> Optional[Dict[str, float]]:
+        """Ask the AI model to decide rotation and crop needs for the image.
+
+        Returns a dict with ``rotation`` (0/90/180/270) and ``crop_factor``
+        (0.5–1.0), or ``None`` if the AI is unavailable or returns an
+        unparseable response.
+        """
+        if self._captioner is None:
+            return None
+        try:
+            try:
+                result = self._captioner(image, text=GEOMETRY_AI_PROMPT)
+            except TypeError:
+                result = self._captioner(image)
+            if result and isinstance(result, list):
+                raw_text = _extract_text_from_model_output(result[0].get("generated_text", ""))
+                geometry = _parse_ai_geometry_response(_sanitize_analysis_text(raw_text))
+                if geometry is not None:
+                    return geometry
+        except Exception:
+            pass
+        return None
+
     def analyze(self, image: "Image.Image", requested_style: str) -> AnalysisResult | EnhancedAnalysisResult:
         if requested_style != "auto":
             result = AnalysisResult(
@@ -394,6 +419,9 @@ class LightweightStyleAdvisor:
         if not primary_description:
             primary_description = secondary_description
 
+        # Ask AI specifically about rotation and cropping needs
+        ai_geometry = self._ask_ai_geometry(image)
+
         primary_style = choose_style_from_description(primary_description)
         secondary_style = choose_style_from_description(secondary_description)
         style = _merge_collaborative_style(primary_style, secondary_style, image)
@@ -401,15 +429,19 @@ class LightweightStyleAdvisor:
         combined_description = f"primary={primary_description} || secondary={secondary_description}"
 
         basic_result = AnalysisResult(description=combined_description, selected_style=style, strategy=strategy)
-        
+        if ai_geometry is not None:
+            setattr(basic_result, "ai_geometry", ai_geometry)
+
         if HAS_MULTI_SOLUTION:
             enhanced = _convert_to_enhanced(basic_result, primary_description)
             enhanced.analysis_reasoning = (
                 f"双模型协作：主模型建议 {primary_style}，辅助模型建议 {secondary_style}，最终采用 {style}"
             )
             enhanced.raw_description = combined_description
+            if ai_geometry is not None:
+                enhanced.ai_geometry = ai_geometry
             return enhanced
-        
+
         return basic_result
 
 
@@ -508,6 +540,34 @@ def _build_analysis_reason(
     if geometry:
         base = f"{base} | geometry={_sanitize_analysis_text(_extract_text_from_model_output(geometry))}"
     return f"{src_name} | {base}" if src_name else base
+
+
+GEOMETRY_AI_PROMPT = (
+    "Examine this image and decide if it needs rotation or cropping for better composition. "
+    "Reply with ONLY a JSON object, no other text: "
+    "{\"rotation\": 0, \"crop_factor\": 1.0, \"reason\": \"ok\"} "
+    "where rotation is 0, 90, 180, or 270 degrees clockwise, "
+    "and crop_factor is 0.5 to 1.0 (1.0 means no crop, 0.8 means crop 20% of border)."
+)
+
+
+def _parse_ai_geometry_response(text: str) -> Optional[Dict[str, float]]:
+    """Parse AI geometry response JSON and return validated rotation/crop_factor dict."""
+    if not text:
+        return None
+    match = re.search(r'\{[^{}]*"rotation"[^{}]*\}', text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group())
+        rotation = float(data.get("rotation", 0))
+        crop_factor = float(data.get("crop_factor", 1.0))
+        if rotation not in {0.0, 90.0, 180.0, 270.0}:
+            rotation = 0.0
+        crop_factor = max(0.5, min(1.0, crop_factor))
+        return {"rotation": rotation, "crop_factor": crop_factor}
+    except Exception:
+        return None
 
 
 def _decide_auto_geometry(description: str) -> Dict[str, float]:
@@ -1291,8 +1351,12 @@ def process_image_file(
             working_image = image
             auto_geometry = {"rotation": 0.0, "crop_factor": AUTO_CROP_DEFAULT_FACTOR}
             if requested_style == "auto":
-                desc = getattr(analysis, "raw_description", None) or getattr(analysis, "description", "")
-                auto_geometry = _decide_auto_geometry(_extract_text_from_model_output(desc))
+                ai_geometry = getattr(analysis, "ai_geometry", None)
+                if ai_geometry is not None:
+                    auto_geometry = ai_geometry
+                else:
+                    desc = getattr(analysis, "raw_description", None) or getattr(analysis, "description", "")
+                    auto_geometry = _decide_auto_geometry(_extract_text_from_model_output(desc))
                 working_image = _apply_auto_geometry_to_pil(image, auto_geometry)
             setattr(analysis, "auto_geometry_decision", f"rotate={int(auto_geometry['rotation'])}, crop={auto_geometry['crop_factor']:.2f}")
     except UnidentifiedImageError as exc:

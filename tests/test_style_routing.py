@@ -12,6 +12,7 @@ from ai_auto_ps import (
     _decide_auto_geometry,
     _extract_text_from_model_output,
     _apply_style_to_frame,
+    _parse_ai_geometry_response,
     apply_style_to_pil,
     get_retouch_profile_values,
     Image,
@@ -63,6 +64,35 @@ class StyleRoutingTests(unittest.TestCase):
         decision = _decide_auto_geometry("建议向左旋转并裁切空白背景")
         self.assertEqual(decision["rotation"], 90.0)
         self.assertLess(decision["crop_factor"], 1.0)
+
+    def test_parse_ai_geometry_response_valid_json(self):
+        text = '{"rotation": 90, "crop_factor": 0.85, "reason": "tilted"}'
+        result = _parse_ai_geometry_response(text)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["rotation"], 90.0)
+        self.assertAlmostEqual(result["crop_factor"], 0.85)
+
+    def test_parse_ai_geometry_response_embedded_in_text(self):
+        text = 'The image needs adjustment. {"rotation": 180, "crop_factor": 0.9, "reason": "upside down"} Done.'
+        result = _parse_ai_geometry_response(text)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["rotation"], 180.0)
+
+    def test_parse_ai_geometry_response_clamps_crop_factor(self):
+        text = '{"rotation": 0, "crop_factor": 0.3, "reason": "extreme"}'
+        result = _parse_ai_geometry_response(text)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["crop_factor"], 0.5)
+
+    def test_parse_ai_geometry_response_rejects_invalid_rotation(self):
+        text = '{"rotation": 45, "crop_factor": 0.9, "reason": "odd angle"}'
+        result = _parse_ai_geometry_response(text)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["rotation"], 0.0)
+
+    def test_parse_ai_geometry_response_returns_none_for_empty(self):
+        self.assertIsNone(_parse_ai_geometry_response(""))
+        self.assertIsNone(_parse_ai_geometry_response("no json here"))
 
     def test_landscape_keywords_route_to_vivid_style(self):
         self.assertEqual(

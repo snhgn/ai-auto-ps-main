@@ -22,6 +22,7 @@ class EnhancedAnalysisResult:
     selected_style: str = ""       # 默认选中的风格
     strategy: str = "llm"          # "llm" or "heuristic_fallback"
     analysis_reasoning: str = ""   # 详细分析理由 - 为什么这样判断
+    ai_geometry: Optional[Dict] = None  # AI判断的几何变换 {"rotation": float, "crop_factor": float}
 
 
 @dataclass
