@@ -222,89 +222,84 @@
 
 1. **识别需要删除的文件**
    ```powershell
-   # 查看当前目录结构
-   ls -la
-   
+   # 查看当前目录结构（Windows）
+   Get-ChildItem -Force
+
+   # 查看 Git 未追踪的文件（重要：只有这些才可以考虑删除）
+   git status --short
+
    # 识别以下无关文件（可根据实际情况调整）：
-   # - 临时测试文件（*_test.py, test_*.py）
-   # - 调试生成的文件（*.pyc, __pycache__）
-   # - 过时的文档（如 UPGRADE_*.md 等中间文档）
-   # - 临时脚本（debug_*.py, temp_*.py）
-   # - IDE 配置文件（.vscode, .idea）
-   # - 其他开发工具生成的文件
+   # - Python 字节码缓存（__pycache__、*.pyc）
+   # - /tmp 目录下的临时调试脚本
    ```
 
 2. **制定清理清单**
    ```
-   保留的文件/目录：
+   保留的文件/目录（仓库核心文件，绝对不可删除）：
    ✅ ai_auto_ps.py               # 核心程序
    ✅ multi_solution_generator.py # 核心功能模块
    ✅ solution_manager.py         # 版本管理模块
-   ✅ launch.py                   # 启动脚本
    ✅ requirements.txt            # 依赖文件
    ✅ README.md                   # 项目说明
    ✅ SKILL.md                    # 工作流文档（保留）
-   ✅ tests/                      # 测试目录（如有）
+   ✅ tests/                      # 测试目录
    ✅ start.bat                   # Windows 启动脚本
-   
-   删除的文件（示例）：
-   ❌ UPGRADE_FEEDBACK_SYSTEM.md  # 过时的功能说明
-   ❌ UPGRADE_SUMMARY.md          # 过时的升级总结
-   ❌ integration_test.py         # 临时集成测试
-   ❌ debug_*.py                  # 调试脚本
-   ❌ temp_*.py                   # 临时文件
-   ❌ .vscode/                    # IDE 配置
-   ❌ __pycache__/                # Python 缓存
-   ❌ *.pyc                       # 编译文件
+   ✅ LICENSE                     # 许可证文件
+   ✅ .gitignore                  # Git 忽略规则
+
+   ⚠️  清理原则：
+   - 仅删除 /tmp 或系统临时目录下由本次开发产生的临时文件
+   - 绝对不要删除仓库中已被 Git 追踪的文件（可用 git status 确认）
+   - 如果不确定某个文件是否应该保留，保留它，不要删除
+
+   可安全清理的对象（仅限未被 Git 追踪的临时产物）：
+   ❌ __pycache__/                # Python 字节码缓存（已在 .gitignore 中）
+   ❌ *.pyc                       # 编译文件（已在 .gitignore 中）
+   ❌ /tmp/ 下的调试脚本           # 只删 /tmp 目录内的临时文件
    ```
 
-3. **执行清理**
+3. **执行清理（仅清理未追踪的临时产物）**
    ```powershell
-   # 逐个删除不需要的文件
-   Remove-Item UPGRADE_FEEDBACK_SYSTEM.md
-   Remove-Item UPGRADE_SUMMARY.md
-   Remove-Item integration_test.py
-   
-   # 或批量删除（谨慎使用）
-   Get-ChildItem -Filter "UPGRADE_*.md" | Remove-Item
-   Get-ChildItem -Filter "debug_*.py" | Remove-Item
-   
-   # 删除目录
-   Remove-Item __pycache__ -Recurse -Force
-   Remove-Item .vscode -Recurse -Force
+   # 先确认文件是否已被 Git 追踪，已追踪的文件不可随意删除
+   git status
+
+   # 仅删除未追踪的 Python 缓存目录（安全）
+   if (Test-Path "__pycache__") { Remove-Item "__pycache__" -Recurse -Force }
+
+   # 删除 /tmp 下本次产生的临时脚本（按需）
+   # Remove-Item "$env:TEMP\debug_temp.py" -ErrorAction SilentlyContinue
    ```
+
+   ⚠️ **禁止操作：** 不要执行 `Remove-Item` 删除仓库根目录下任何 `.md`、`.py`、`.bat`、`.txt` 文件，这些均为受版本控制的文件。
 
 4. **验证清理结果**
    ```powershell
    # 查看最终目录结构
-   ls -la
-   
+   Get-ChildItem -Force
+
    # 确认关键文件存在
    Test-Path ai_auto_ps.py
    Test-Path SKILL.md
    Test-Path README.md
+   Test-Path requirements.txt
+   Test-Path start.bat
    ```
 
 5. **提交清理结果**
    ```powershell
    git add .
-   git commit -m "chore: 清理工程文件，删除过时文档和临时脚本
-   
-   - 删除过时的 UPGRADE_*.md 文档
-   - 删除临时测试和调试脚本
-   - 删除 IDE 配置文件和缓存
-   - 保留核心程序文件和 SKILL.md
-   
-   工程目录现已干净整洁
+   git commit -m "chore: 清理工程文件，删除临时产物
+
+   - 删除 __pycache__ 等字节码缓存
+   - 保留所有核心程序文件和文档
    "
-   
-   # 可选：推送到远程
-   git push origin main
    ```
 
+   > ⚠️ **Agent 环境注意：** 不要执行 `git push`，直接调用 `report_progress` 工具完成提交推送。
+
 **清理检查清单：**
-- [ ] 所有临时文件已删除
-- [ ] 核心程序文件完整
+- [ ] 已用 `git status` 确认只删除了未追踪的临时文件
+- [ ] 核心程序文件完整（ai_auto_ps.py、solution_manager.py 等）
 - [ ] SKILL.md 保留（工作流文档）
 - [ ] README.md 保留（项目说明）
 - [ ] Git 提交完成
@@ -313,45 +308,50 @@
 **决策点：**
 - 是否需要保留其他文档文件？
   - ✅ 是 → 有选择地保留必要的文档
-  - ❌ 否 → 仅保留 README.md 和 SKILL.md
+  - 不确定？→ **保留**，不要冒险删除
 
 ---
 
 ### 🚀 第五阶段：版本控制与上传
 
-**目标：** 将经过验证的版本上传到 GitHub
+**目标：** 将经过验证的版本通过平台工具推送到 GitHub
+
+> ⚠️ **重要：Agent 环境限制**
+> 在 GitHub Copilot Agent / 受限 CI 沙箱中，**直接执行 `git push` 命令会被系统拦截**。
+> 必须使用 **`report_progress` 工具** 来完成提交与推送操作。
+> 不要反复重试 `git push`，遇到拒绝时应立即切换到 `report_progress`。
 
 **步骤：**
 
 1. **检查 Git 状态**
    ```powershell
    git status
-   git diff                    # 查看具体改动
+   git --no-pager diff --stat    # 查看改动摘要
    ```
    - 确认所有修改都已保存
    - 确认新文件已被追踪
    - 理解本次提交的所有改动
 
-2. **阶段化提交**
+2. **阶段化提交（本地）**
    ```powershell
    # 方案 A：分类提交（推荐）
    git add ai_auto_ps.py multi_solution_generator.py
    git commit -m "feat: 添加多版本管理功能"
-   
-   git add README.md UPGRADE_FEEDBACK_SYSTEM.md
+
+   git add README.md
    git commit -m "docs: 更新文档说明新功能"
-   
+
    # 方案 B：一次性提交
    git add .
    git commit -m "feat: 完整迭代 - 多版本反馈系统
-   
+
    - 新增 solution_manager.py 模块
    - 扩展 multi_solution_generator.py 支持理由
    - 升级 UI 支持多版本对比和反馈
    - 更新完整文档
    "
    ```
-   
+
    提交信息规范：
    - `feat:` 新功能
    - `fix:` Bug 修复
@@ -362,49 +362,45 @@
 
 3. **本地验证**
    ```powershell
-   # 查看即将推送的提交
-   git log --oneline origin/main..HEAD
-   
-   # 验证当前分支（应该是 main 或 develop）
+   # 查看本地提交列表
+   git --no-pager log --oneline -5
+
+   # 验证当前分支
    git branch
    ```
    - 确认提交历史清晰
    - 确认在正确的分支
    - 确认没有本地未提交的改动
 
-4. **本地版本上传（Git Push）**
+4. **通过 report_progress 工具推送到远程**
+
+   > **Agent 环境专用步骤（替代 git push）**
+   >
+   > 调用 `report_progress` 工具，填写 `commitMessage` 与 `prDescription`。
+   > 该工具会自动执行 `git add .`、`git commit`、`git push` 并更新 PR 描述。
+   > **不要** 在终端手动执行 `git push origin <branch>`，该命令在 Agent 环境中被禁止。
+
+   如需在 **本机 Windows 开发环境**（非 Agent 沙箱）中推送：
    ```powershell
-   git push origin main
-   # 或
-   git push origin <branch-name>
+   git push origin <当前分支名>
+   # 例如：git push origin main
    ```
-   - 📡 将本地提交上传到本地 Git 仓库（如 Gitee/GitHub/GitLab）
-   - ⏳ 等待推送完成（若网络问题可稍后重试）
-   - ✅ 验证本地上传成功
-   - 📝 **说明**：此步骤可选择上传到 GitHub，不强制要求；本地 Git 提交完成即可进入下一阶段
+   - 📡 等待推送完成
+   - ⏳ 若网络超时，稍后重试，不阻断工程流程
 
 5. **远程验证（可选）**
    ```powershell
-   # 如选择上传到 GitHub，可在远程仓库检查
-   # 1. 访问仓库页面
-   # 2. 查看最新提交
-   # 3. 验证文件是否正确上传
-   # 4. 检查 Actions（如有 CI/CD）
+   # 推送完成后可在浏览器访问仓库确认：
+   # 1. 查看最新提交是否已同步
+   # 2. 验证文件内容正确
+   # 3. 检查 GitHub Actions（如有 CI/CD）
    ```
-   
-   验证清单（如选择推送到远程）：
-   - ✅ 提交显示在远程仓库上
-   - ✅ 文件内容正确
-   - ✅ README 在主页正确显示
-   - ✅ CI/CD 检查通过（如有）
 
 **决策点：**
-- 是否推送到远程仓库（GitHub/Gitee 等）？
-  - ✅ 是 → 执行 git push，验证远程更新
-    - 📡 **网络异常处理**：
-      - 如果遇到网络超时/连接失败，**放弃上传任务**，本地工作已安全保存
-      - 提示：网络恢复后可稍后重新推送，不阻断工程流程
-  - ❌ 否 → 跳过，本地 Git 提交完成即可进入下一步
+- 是否在 Agent 环境中运行？
+  - ✅ 是 → **使用 report_progress 工具**，禁止手动 git push
+  - ❌ 否（本机 Windows）→ 使用 `git push origin <branch-name>`
+  - 遇到网络超时/拒绝 → **放弃当前推送尝试**，不要无限重试；本地 git commit 已安全保存
 
 ---
 
@@ -433,8 +429,8 @@
 
 ### 版本管理
 - [ ] 提交信息清晰准确
-- [ ] 提交已推送到远程（可选：网络异常时可跳过）
-- [ ] GitHub 显示最新版本（如已推送）
+- [ ] 本地 git commit 已完成（必须）
+- [ ] 通过 report_progress 工具或 git push 推送到远程（Agent 环境用前者；网络异常时可暂缓，不阻断工程）
 - [ ] 分支状态正确
 
 ---
@@ -456,6 +452,13 @@
 
 ### Q: 推送失败怎么办？
 **A:**
+
+**情况 A：在 Agent / CI 沙箱中运行**
+- 直接执行 `git push` 在 Agent 环境中会被系统拦截，这是正常现象
+- **解决方案：** 使用 `report_progress` 工具代替 `git push`，由平台完成推送
+- 不要反复重试 `git push`，会持续失败
+
+**情况 B：在本机 Windows 环境中运行**
 ```powershell
 # 1. 检查网络连接
 ping github.com
@@ -464,11 +467,11 @@ ping github.com
 git config user.name
 git config user.email
 
-# 3. 尝试重新认证
-git credential reject https://github.com
+# 3. 查看具体错误
+git --no-pager push --verbose origin <branch-name>
 
-# 4. 查看具体错误
-git push --verbose origin main
+# 4. 若认证失败，更新凭据
+git credential reject https://github.com
 ```
 
 ### Q: 如何只测试新增功能而不影响现有功能？
@@ -485,7 +488,7 @@ git push --verbose origin main
 1. 语法检查
 2. 快速功能测试
 3. 更新 README（仅相关部分）
-4. 提交和推送
+4. 本地 git commit + 通过 report_progress 工具推送
 
 **用时：** 5-15 分钟
 
@@ -536,8 +539,8 @@ git push --verbose origin main
 - 使用示例可运行
 
 ✅ **版本控制**
-- 提交已推送
-- GitHub 显示最新代码
+- 本地 git commit 已完成
+- 通过 report_progress 工具（Agent 环境）或 git push（本机）完成推送
 - 提交历史清晰
 
 ---
