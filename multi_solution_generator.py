@@ -130,6 +130,76 @@ SOLUTION_TEMPLATES: Dict[str, Dict] = {
             "color": 1.05,
         }
     },
+    # ── Stylized color-grading templates ──────────────────────────────────
+    "warm_golden_grade": {
+        "display_name": "暖金调色",
+        "description": "黄金时刻暖色调，橙红高光，柔和暗部",
+        "applicable_scenes": ["portrait", "landscape", "food"],
+        "style_adjustments": {
+            "brightness": 1.06,
+            "contrast": 1.08,
+            "color": 1.12,
+            "warm_tint": 0.65,
+            "shadows_lift": 0.20,
+            "highlights_pull": 0.15,
+            "vignette": 0.25,
+        }
+    },
+    "teal_orange_grade": {
+        "display_name": "青橙分色",
+        "description": "电影级青橙色调，暗部偏青，高光偏橙",
+        "applicable_scenes": ["landscape", "night", "portrait"],
+        "style_adjustments": {
+            "brightness": 0.96,
+            "contrast": 1.22,
+            "color": 0.85,
+            "warm_tint": 0.50,
+            "teal_shadow_tint": 0.60,
+            "highlights_pull": 0.20,
+            "vignette": 0.35,
+        }
+    },
+    "vintage_fade_grade": {
+        "display_name": "复古胶片",
+        "description": "胶片复古效果，暗角、褪色和颗粒感",
+        "applicable_scenes": ["portrait", "landscape", "food"],
+        "style_adjustments": {
+            "brightness": 1.02,
+            "contrast": 0.88,
+            "color": 0.78,
+            "shadows_lift": 0.35,
+            "warm_tint": 0.30,
+            "vignette": 0.40,
+            "grain": 0.50,
+        }
+    },
+    "bright_airy_grade": {
+        "display_name": "明亮空气感",
+        "description": "高亮低对比，营造清新空气感",
+        "applicable_scenes": ["portrait", "food", "product"],
+        "style_adjustments": {
+            "brightness": 1.15,
+            "contrast": 0.90,
+            "color": 1.08,
+            "shadows_lift": 0.25,
+            "highlights_pull": 0.25,
+            "warm_tint": 0.25,
+            "vignette": 0.05,
+        }
+    },
+    "moody_dark_grade": {
+        "display_name": "暗调情绪",
+        "description": "低亮高对比，营造戏剧性暗调氛围",
+        "applicable_scenes": ["landscape", "night", "portrait"],
+        "style_adjustments": {
+            "brightness": 0.88,
+            "contrast": 1.30,
+            "color": 0.82,
+            "highlights_pull": 0.30,
+            "warm_tint": -0.20,
+            "vignette": 0.50,
+        }
+    },
 }
 
 
@@ -142,7 +212,7 @@ def generate_multiple_solutions(
     max_solutions: int = 4,
 ) -> List[SolutionVariant]:
     """
-    根据分析结果生成多个修改方案
+    根据分析结果生成多个修改方案（含风格化调色选项）
     
     Args:
         analysis_result: 增强的图像分析结果
@@ -159,36 +229,51 @@ def generate_multiple_solutions(
     # 1. 总是加入色温纠正（通用方案）
     solutions.append(_create_solution("color_correction", intensity=0.6))
     
-    # 2. 根据场景推荐专化方案
+    # 2. 根据场景推荐专化方案（实用 + 风格化各一个）
     if scene == "portrait":
-        # 人像优先推荐肤色优化和精修
         solutions.append(_create_solution("skin_tone_enhance", intensity=0.75))
+        solutions.append(_create_solution("warm_golden_grade", intensity=0.70))
+        solutions.append(_create_solution("bright_airy_grade", intensity=0.65))
         solutions.append(_create_solution("portrait_retouch", intensity=0.65))
+        solutions.append(_create_solution("vintage_fade_grade", intensity=0.55))
         solutions.append(_create_solution("cinematic_grade", intensity=0.55))
         
     elif scene == "landscape":
-        # 风景推荐对比和活力
         solutions.append(_create_solution("vibrance_boost", intensity=0.8))
+        solutions.append(_create_solution("teal_orange_grade", intensity=0.75))
         solutions.append(_create_solution("contrast_pop", intensity=0.7))
+        solutions.append(_create_solution("moody_dark_grade", intensity=0.65))
         solutions.append(_create_solution("detail_sharpen", intensity=0.6))
         
     elif scene == "food":
-        # 美食推荐活力和对比
-        solutions.append(_create_solution("vibrance_boost", intensity=0.85))
-        solutions.append(_create_solution("detail_sharpen", intensity=0.7))
-        solutions.append(_create_solution("contrast_pop", intensity=0.65))
+        solutions.append(_create_solution("warm_golden_grade", intensity=0.80))
+        solutions.append(_create_solution("vibrance_boost", intensity=0.80))
+        solutions.append(_create_solution("bright_airy_grade", intensity=0.70))
+        solutions.append(_create_solution("detail_sharpen", intensity=0.65))
         
     elif scene == "night":
-        # 夜景推荐对比和清晰
-        solutions.append(_create_solution("contrast_pop", intensity=0.8))
-        solutions.append(_create_solution("detail_sharpen", intensity=0.75))
-        solutions.append(_create_solution("cinematic_grade", intensity=0.7))
+        solutions.append(_create_solution("teal_orange_grade", intensity=0.80))
+        solutions.append(_create_solution("moody_dark_grade", intensity=0.75))
+        solutions.append(_create_solution("contrast_pop", intensity=0.75))
+        solutions.append(_create_solution("detail_sharpen", intensity=0.70))
+
+    elif scene in {"warm", "airy"}:
+        solutions.append(_create_solution("warm_golden_grade", intensity=0.80))
+        solutions.append(_create_solution("bright_airy_grade", intensity=0.75))
+        solutions.append(_create_solution("vibrance_boost", intensity=0.65))
+
+    elif scene in {"moody", "vintage"}:
+        solutions.append(_create_solution("moody_dark_grade", intensity=0.80))
+        solutions.append(_create_solution("teal_orange_grade", intensity=0.75))
+        solutions.append(_create_solution("vintage_fade_grade", intensity=0.70))
+        solutions.append(_create_solution("contrast_pop", intensity=0.65))
     
     else:
-        # 默认：活力 + 对比 + 精修
+        # 默认：活力 + 暖金 + 对比
         solutions.append(_create_solution("vibrance_boost", intensity=0.7))
+        solutions.append(_create_solution("warm_golden_grade", intensity=0.65))
         solutions.append(_create_solution("contrast_pop", intensity=0.65))
-        if "portrait" in recommended_dirs or any(s in analysis_result.subjects for s in ["person", "face"]):
+        if any(s in analysis_result.subjects for s in ["person", "face"]):
             solutions.append(_create_solution("portrait_retouch", intensity=0.6))
     
     # 3. 去重并限制数量
@@ -239,6 +324,12 @@ def _create_solution(
         "portrait_retouch": "这是人像的专业修饰方案，综合应用磨皮、美白、塑形等技术。",
         "cinematic_grade": "采用电影分级风格，创造更具艺术感和专业质感的视觉效果。",
         "detail_sharpen": "增强细节清晰度，让纹理更加分明，提升整体质感。",
+        # Stylized grading reasonings
+        "warm_golden_grade": "画面呈现暖色调特征，黄金时刻风格可强化橙红高光并柔化暗部，营造温暖氛围。",
+        "teal_orange_grade": "采用专业电影青橙分色：暗部偏青蓝、高光偏橙黄，是最受认可的电影调色风格之一。",
+        "vintage_fade_grade": "复古胶片风格：提升暗部基调（褪色感）并加入颗粒和暗角，营造胶片年代质感。",
+        "bright_airy_grade": "高亮低对比的空气感风格：柔和的白色高光区配合轻暖调，适合清新时尚类题材。",
+        "moody_dark_grade": "暗调情绪风格：压低整体亮度并强化对比度与暗角，配合轻冷色调营造戏剧张力。",
     }
     
     if not reasoning:

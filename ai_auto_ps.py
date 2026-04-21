@@ -205,6 +205,51 @@ STYLE_PRESETS: Dict[str, Dict[str, float]] = {
         "nose_slim_video": 0.02,
         "chin_refine_video": 0.02,
     },
+    # ── Stylized color-grading presets ─────────────────────────────────────
+    "warm_golden": {
+        "brightness": 1.06,
+        "contrast": 1.08,
+        "color": 1.12,
+        "warm_tint": 0.65,
+        "shadows_lift": 0.20,
+        "highlights_pull": 0.15,
+        "vignette": 0.25,
+    },
+    "teal_orange": {
+        "brightness": 0.96,
+        "contrast": 1.22,
+        "color": 0.85,
+        "warm_tint": 0.50,
+        "teal_shadow_tint": 0.60,
+        "highlights_pull": 0.20,
+        "vignette": 0.35,
+    },
+    "vintage_fade": {
+        "brightness": 1.02,
+        "contrast": 0.88,
+        "color": 0.78,
+        "shadows_lift": 0.35,
+        "warm_tint": 0.30,
+        "vignette": 0.40,
+        "grain": 0.50,
+    },
+    "bright_airy": {
+        "brightness": 1.15,
+        "contrast": 0.90,
+        "color": 1.08,
+        "shadows_lift": 0.25,
+        "highlights_pull": 0.25,
+        "warm_tint": 0.25,
+        "vignette": 0.05,
+    },
+    "moody_dark": {
+        "brightness": 0.88,
+        "contrast": 1.30,
+        "color": 0.82,
+        "highlights_pull": 0.30,
+        "warm_tint": -0.20,
+        "vignette": 0.50,
+    },
 }
 
 RETOUCH_CONTROL_KEYS: Tuple[str, ...] = (
@@ -232,6 +277,20 @@ RETOUCH_CONTROL_LABELS: Dict[str, str] = {
     "nose_slim": "窄鼻",
     "chin_refine": "下巴",
 }
+
+# Keys for stylized color-grading effects (shadows/highlights/toning/vignette/etc.)
+STYLIZED_GRADE_KEYS: Tuple[str, ...] = (
+    "shadows_lift",      # 0.0-1.0: lift shadow floor for matte/faded look
+    "highlights_pull",   # 0.0-1.0: compress highlights toward midtones
+    "warm_tint",         # -1.0-1.0: >0 warm/orange shift, <0 cool/blue shift
+    "teal_shadow_tint",  # 0.0-1.0: teal tint applied to shadow regions
+    "vignette",          # 0.0-1.0: darken image edges
+    "clarity",           # 0.0-1.0: enhance mid-frequency local contrast
+    "grain",             # 0.0-1.0: add film-grain noise
+    "r_gain",            # multiplicative gain on red channel
+    "g_gain",            # multiplicative gain on green channel
+    "b_gain",            # multiplicative gain on blue channel
+)
 
 RETOUCH_PROFILE_PRESETS: Dict[str, Dict[str, float]] = {
     "自然韩系": {
@@ -285,6 +344,23 @@ STYLE_HINTS: Dict[str, str] = {
     "street": "cinematic",
     "food": "food_fresh",
     "dish": "food_fresh",
+    # ── Stylized grading hints ──────────────────────────────────────────
+    "golden": "warm_golden",
+    "sunset": "warm_golden",
+    "sunrise": "warm_golden",
+    "warm": "warm_golden",
+    "teal": "teal_orange",
+    "orange tone": "teal_orange",
+    "vintage": "vintage_fade",
+    "retro": "vintage_fade",
+    "film grain": "vintage_fade",
+    "faded": "vintage_fade",
+    "airy": "bright_airy",
+    "bright airy": "bright_airy",
+    "minimal": "bright_airy",
+    "moody": "moody_dark",
+    "dramatic": "moody_dark",
+    "somber": "moody_dark",
 }
 
 NIGHT_BRIGHTNESS_THRESHOLD = 0.28
@@ -357,12 +433,28 @@ class LightweightStyleAdvisor:
         rgb = image.convert("RGB")
         arr = np.asarray(rgb, dtype=np.float32)
         brightness = float(arr.mean()) / 255.0
+        r_mean = float(arr[:, :, 0].mean()) / 255.0
+        g_mean = float(arr[:, :, 1].mean()) / 255.0
+        b_mean = float(arr[:, :, 2].mean()) / 255.0
         red_blue_std = float(np.std(arr[:, :, 0] - arr[:, :, 2])) / 255.0
+        saturation_proxy = float(
+            np.std(arr.reshape(-1, 3), axis=0).mean()
+        ) / 255.0
 
         if brightness < 0.32:
+            if r_mean < b_mean - 0.04:
+                return "dark moody blue night scene"
             return "dark night street scene"
+        if r_mean > b_mean + 0.10 and brightness > 0.55:
+            return "warm golden sunset outdoor scene"
+        if b_mean > r_mean + 0.08:
+            return "cool blue landscape scene"
         if red_blue_std > 0.20:
             return "high-color landscape photo"
+        if brightness > 0.75 and saturation_proxy < 0.12:
+            return "bright airy minimal scene"
+        if saturation_proxy < 0.08 and brightness < 0.55:
+            return "dramatic moody desaturated scene"
         return "portrait person photo"
 
     def analyze(self, image: "Image.Image", requested_style: str) -> AnalysisResult | EnhancedAnalysisResult:
@@ -514,14 +606,22 @@ def _convert_to_enhanced(basic: AnalysisResult, description: str = "") -> Enhanc
     lowered = description.lower()
     scene = "portrait"  # 默认
     
-    if any(w in lowered for w in ["landscape", "mountain", "sky", "outdoor", "river", "forest"]):
+    if any(w in lowered for w in ["landscape", "mountain", "sky", "outdoor", "river", "forest", "blue landscape", "cool blue"]):
         scene = "landscape"
     elif any(w in lowered for w in ["food", "dish", "meal", "restaurant", "cake", "fruit"]):
         scene = "food"
-    elif any(w in lowered for w in ["night", "dark", "street", "city", "urban"]):
+    elif any(w in lowered for w in ["night", "dark night", "street", "city", "urban"]):
         scene = "night"
     elif any(w in lowered for w in ["product", "item", "object", "good"]):
         scene = "product"
+    elif any(w in lowered for w in ["golden", "sunset", "sunrise", "warm golden"]):
+        scene = "warm"
+    elif any(w in lowered for w in ["bright airy", "minimal", "airy"]):
+        scene = "airy"
+    elif any(w in lowered for w in ["moody", "dramatic", "desaturated", "somber"]):
+        scene = "moody"
+    elif any(w in lowered for w in ["vintage", "retro", "film grain", "faded"]):
+        scene = "vintage"
     
     # 提取subjects
     subjects = []
@@ -536,16 +636,26 @@ def _convert_to_enhanced(basic: AnalysisResult, description: str = "") -> Enhanc
         "direction": "neutral",
     }
     
-    # 推荐方向
-    recommended_dirs = []
+    # 推荐方向：将场景映射到具体方案名称（含风格化调色）
+    recommended_dirs: List[str] = []
     if "person" in subjects or "face" in subjects:
-        recommended_dirs = ["skin_tone", "portrait_retouch"]
+        recommended_dirs = ["skin_tone_enhance", "portrait_retouch", "warm_golden_grade", "bright_airy_grade"]
     elif scene == "landscape":
-        recommended_dirs = ["vibrance", "contrast"]
+        recommended_dirs = ["vibrance_boost", "contrast_pop", "teal_orange_grade", "moody_dark_grade"]
     elif scene == "food":
-        recommended_dirs = ["vibrance", "detail"]
+        recommended_dirs = ["vibrance_boost", "detail_sharpen", "warm_golden_grade", "bright_airy_grade"]
+    elif scene == "night":
+        recommended_dirs = ["contrast_pop", "detail_sharpen", "teal_orange_grade", "moody_dark_grade"]
+    elif scene == "warm":
+        recommended_dirs = ["warm_golden_grade", "vibrance_boost", "color_correction"]
+    elif scene == "airy":
+        recommended_dirs = ["bright_airy_grade", "color_correction", "detail_sharpen"]
+    elif scene == "moody":
+        recommended_dirs = ["moody_dark_grade", "teal_orange_grade", "contrast_pop"]
+    elif scene == "vintage":
+        recommended_dirs = ["vintage_fade_grade", "warm_golden_grade", "moody_dark_grade"]
     else:
-        recommended_dirs = ["color_correction"]
+        recommended_dirs = ["color_correction", "vibrance_boost"]
     
     return EnhancedAnalysisResult(
         raw_description=description,
@@ -618,6 +728,11 @@ def _resolve_style_values(
         else:
             values[key] = _clamp_unit(base.get(key, 0.0))
 
+    # Carry through stylized grading keys from the preset (no clamping – ranges vary)
+    for key in STYLIZED_GRADE_KEYS:
+        if key in base:
+            values[key] = float(base[key])
+
     overrides = normalize_retouch_controls(retouch_controls)
     values.update(overrides)
     return values
@@ -676,7 +791,99 @@ def _build_output_path(src: Path, style_name: str, extension: str) -> Path:
     return output_dir / f"{src.stem}_{safe_style}{extension}"
 
 
-def apply_style_to_pil(
+# ============================================================================
+# Stylized color-grading helpers
+# ============================================================================
+
+def _apply_stylized_grading_np(arr: np.ndarray, values: Dict[str, float]) -> np.ndarray:
+    """Apply stylized color-grading effects to an RGB float32 ndarray (0-255 range).
+
+    Handles: per-channel gains, warm/cool tint, shadows lift, highlights pull,
+    teal-shadow tint, vignette, clarity, and film grain.
+    """
+    # Per-channel multiplicative gains
+    r_gain = values.get("r_gain", 1.0)
+    g_gain = values.get("g_gain", 1.0)
+    b_gain = values.get("b_gain", 1.0)
+    if r_gain != 1.0 or g_gain != 1.0 or b_gain != 1.0:
+        arr = arr.copy()
+        arr[:, :, 0] = np.clip(arr[:, :, 0] * r_gain, 0, 255)
+        arr[:, :, 1] = np.clip(arr[:, :, 1] * g_gain, 0, 255)
+        arr[:, :, 2] = np.clip(arr[:, :, 2] * b_gain, 0, 255)
+
+    # Warm tint: shift red up / blue down (positive = warm, negative = cool)
+    warm_tint = values.get("warm_tint", 0.0)
+    if warm_tint != 0.0:
+        arr = arr.copy() if r_gain == 1.0 and g_gain == 1.0 and b_gain == 1.0 else arr
+        arr[:, :, 0] = np.clip(arr[:, :, 0] + warm_tint * 15.0, 0, 255)
+        arr[:, :, 2] = np.clip(arr[:, :, 2] - warm_tint * 12.0, 0, 255)
+
+    # Shadows lift: raise the shadow floor (faded / matte look)
+    shadows_lift = values.get("shadows_lift", 0.0)
+    if shadows_lift > 0.0:
+        weight = np.clip(1.0 - arr / 128.0, 0.0, 1.0)
+        arr = np.clip(arr + shadows_lift * 40.0 * weight, 0, 255)
+
+    # Highlights pull: compress highlights toward mid-tones
+    highlights_pull = values.get("highlights_pull", 0.0)
+    if highlights_pull > 0.0:
+        weight = np.clip((arr - 200.0) / 55.0, 0.0, 1.0)
+        arr = np.clip(arr - highlights_pull * 22.0 * weight, 0, 255)
+
+    # Teal shadow tint: add teal (G+B, subtract R) in shadow regions
+    teal_shadow = values.get("teal_shadow_tint", 0.0)
+    if teal_shadow > 0.0:
+        lum = arr.mean(axis=2, keepdims=True)
+        shadow_w = np.clip(1.0 - lum / 128.0, 0.0, 1.0)
+        arr[:, :, 0:1] = np.clip(arr[:, :, 0:1] - teal_shadow * 8.0 * shadow_w, 0, 255)
+        arr[:, :, 1:2] = np.clip(arr[:, :, 1:2] + teal_shadow * 14.0 * shadow_w, 0, 255)
+        arr[:, :, 2:3] = np.clip(arr[:, :, 2:3] + teal_shadow * 20.0 * shadow_w, 0, 255)
+
+    # Vignette: darken edges with a smooth radial gradient
+    vignette = values.get("vignette", 0.0)
+    if vignette > 0.0:
+        h, w = arr.shape[:2]
+        y_idx, x_idx = np.indices((h, w), dtype=np.float32)
+        cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+        dist = np.sqrt(((x_idx - cx) / max(cx, 1.0)) ** 2 + ((y_idx - cy) / max(cy, 1.0)) ** 2)
+        vig = np.clip(1.0 - vignette * (dist ** 1.5) * 0.65, 0.15, 1.0)[..., None]
+        arr = arr * vig
+
+    # Clarity: boost mid-frequency local contrast via unsharp mask (large radius)
+    clarity = values.get("clarity", 0.0)
+    if clarity > 0.0 and cv2 is not None:
+        arr_u8 = np.clip(arr, 0, 255).astype(np.uint8)
+        blurred = cv2.GaussianBlur(arr_u8, (0, 0), sigmaX=14.0).astype(np.float32)
+        arr = np.clip(arr + clarity * 0.55 * (arr - blurred), 0, 255)
+
+    # Film grain: add Gaussian noise for an analog feel
+    grain = values.get("grain", 0.0)
+    if grain > 0.0:
+        noise = np.random.normal(0.0, grain * 11.0, arr.shape).astype(np.float32)
+        arr = np.clip(arr + noise, 0, 255)
+
+    return arr
+
+
+def _apply_stylized_grading_pil(image: "Image.Image", values: Dict[str, float]) -> "Image.Image":
+    """PIL wrapper for stylized grading; returns the original image when numpy is unavailable."""
+    if np is None:
+        return image
+    arr = np.asarray(image.convert("RGB"), dtype=np.float32)
+    arr = _apply_stylized_grading_np(arr, values)
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+
+
+def _apply_stylized_grading_bgr(frame: np.ndarray, values: Dict[str, float]) -> np.ndarray:
+    """BGR uint8 wrapper for stylized grading (used in video frame processing)."""
+    if np is None or cv2 is None:
+        return frame
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).astype(np.float32)
+    rgb = _apply_stylized_grading_np(rgb, values)
+    return cv2.cvtColor(np.clip(rgb, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+
+
+
     image: "Image.Image",
     style_name: Optional[str] = None,
     retouch_controls: Optional[Dict[str, float]] = None,
@@ -697,6 +904,7 @@ def apply_style_to_pil(
     out = ImageEnhance.Brightness(image).enhance(style_values["brightness"])
     out = ImageEnhance.Contrast(out).enhance(style_values["contrast"])
     out = ImageEnhance.Color(out).enhance(style_values["color"])
+    out = _apply_stylized_grading_pil(out, style_values)
     return _apply_advanced_retouch_to_pil(out, style_values)
 
 
@@ -1284,7 +1492,7 @@ def _apply_style_to_frame(
     gray = cv2.cvtColor(frame_u8, cv2.COLOR_BGR2GRAY).astype(np.float32)[..., None]
     frame_f = np.clip(gray + (frame_f - gray) * values["color"], 0, 255)
 
-    out = frame_f.astype(np.uint8)
+    out = _apply_stylized_grading_bgr(frame_f.astype(np.uint8), values)
     return _apply_advanced_retouch_to_bgr(out, values)
 
 
