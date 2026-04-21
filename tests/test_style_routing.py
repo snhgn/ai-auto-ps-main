@@ -7,7 +7,9 @@ from unittest.mock import patch
 from ai_auto_ps import (
     RETOUCH_CONTROL_KEYS,
     RETOUCH_PROFILE_PRESETS,
+    _apply_auto_geometry_to_pil,
     _build_analysis_reason,
+    _decide_auto_geometry,
     _extract_text_from_model_output,
     _apply_style_to_frame,
     apply_style_to_pil,
@@ -46,6 +48,21 @@ class StyleRoutingTests(unittest.TestCase):
         reason = _build_analysis_reason(fake_analysis, {"skin_smooth": 0.6}, src_name="demo.jpg")
         self.assertIn("demo.jpg | strategy=llm", reason)
         self.assertIn("description=portrait person", reason)
+
+    def test_build_analysis_reason_contains_geometry(self):
+        fake_analysis = SimpleNamespace(
+            selected_style="portrait_soft",
+            strategy="llm",
+            raw_description="portrait person",
+            auto_geometry_decision="rotate=90, crop=0.90",
+        )
+        reason = _build_analysis_reason(fake_analysis, {"skin_smooth": 0.6}, src_name="demo.jpg")
+        self.assertIn("geometry=rotate=90, crop=0.90", reason)
+
+    def test_decide_auto_geometry_detects_rotate_and_crop_keywords(self):
+        decision = _decide_auto_geometry("建议向左旋转并裁切空白背景")
+        self.assertEqual(decision["rotation"], 90.0)
+        self.assertLess(decision["crop_factor"], 1.0)
 
     def test_landscape_keywords_route_to_vivid_style(self):
         self.assertEqual(
@@ -104,6 +121,12 @@ class StyleRoutingTests(unittest.TestCase):
         sample = Image.new("RGB", (24, 24), (130, 90, 160))
         styled = apply_style_to_pil(sample, "portrait_soft")
         self.assertEqual(styled.size, sample.size)
+
+    @unittest.skipIf(Image is None, "pillow not installed")
+    def test_apply_auto_geometry_crop_keeps_output_size(self):
+        sample = Image.new("RGB", (24, 18), (130, 90, 160))
+        transformed = _apply_auto_geometry_to_pil(sample, {"rotation": 0.0, "crop_factor": 0.82})
+        self.assertEqual(transformed.size, sample.size)
 
     def test_normalize_uploaded_file_paths_from_mixed_input(self):
         class _MockFile:

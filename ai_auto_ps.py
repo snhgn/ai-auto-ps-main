@@ -289,6 +289,7 @@ STYLE_HINTS: Dict[str, str] = {
 
 NIGHT_BRIGHTNESS_THRESHOLD = 0.28
 BRIGHT_LANDSCAPE_THRESHOLD = 0.75
+AUTO_CROP_DEFAULT_FACTOR = 1.0
 
 PREFERENCE_BRIGHTNESS_LOWER_KEYWORDS = ("太亮", "过曝", "刺眼", "too bright")
 PREFERENCE_BRIGHTNESS_HIGHER_KEYWORDS = ("太暗", "偏暗", "提亮", "too dark")
@@ -503,7 +504,62 @@ def _build_analysis_reason(
         f"strategy={strategy} | selected_style={selected_style} | "
         f"description={description} | retouch={summarize_retouch_controls(retouch_controls)}"
     )
+    geometry = getattr(analysis, "auto_geometry_decision", "")
+    if geometry:
+        base = f"{base} | geometry={_sanitize_analysis_text(_extract_text_from_model_output(geometry))}"
     return f"{src_name} | {base}" if src_name else base
+
+
+def _decide_auto_geometry(description: str) -> Dict[str, float]:
+    lowered = _sanitize_analysis_text(description).lower()
+    rotation = 0
+    crop_factor = AUTO_CROP_DEFAULT_FACTOR
+
+    rotate_left_hints = ("向左旋转", "左转", "逆时针", "rotate left", "counterclockwise", "rotate ccw")
+    rotate_right_hints = ("向右旋转", "右转", "顺时针", "rotate right", "clockwise", "rotate cw")
+    rotate_180_hints = ("180", "倒置", "颠倒", "upside down", "upside-down")
+    crop_hints = ("裁切", "裁剪", "crop", "reframe", "too much background", "空白太多", "主体太小")
+    tight_crop_hints = ("紧凑裁切", "紧一点", "特写", "close-up", "tight crop")
+
+    if any(h in lowered for h in rotate_left_hints):
+        rotation = 90
+    elif any(h in lowered for h in rotate_right_hints):
+        rotation = 270
+    elif any(h in lowered for h in rotate_180_hints):
+        rotation = 180
+
+    if any(h in lowered for h in crop_hints):
+        crop_factor = 0.90
+    if any(h in lowered for h in tight_crop_hints):
+        crop_factor = 0.82
+
+    crop_factor = max(0.5, min(1.0, crop_factor))
+    return {"rotation": float(rotation), "crop_factor": float(crop_factor)}
+
+
+def _apply_auto_geometry_to_pil(image: "Image.Image", decision: Dict[str, float]) -> "Image.Image":
+    rotation = int(decision.get("rotation", 0))
+    crop_factor = float(decision.get("crop_factor", AUTO_CROP_DEFAULT_FACTOR))
+
+    out = image
+    if rotation in {90, 180, 270}:
+        out = out.rotate(rotation, expand=True)
+
+    crop_factor = max(0.5, min(1.0, crop_factor))
+    if crop_factor < 1.0:
+        width, height = out.size
+        target_w = max(1, int(round(width * crop_factor)))
+        target_h = max(1, int(round(height * crop_factor)))
+        left = max(0, (width - target_w) // 2)
+        top = max(0, (height - target_h) // 2)
+        cropped = out.crop((left, top, left + target_w, top + target_h))
+        if hasattr(Image, "Resampling"):
+            resample = Image.Resampling.LANCZOS
+        else:
+            resample = Image.LANCZOS
+        out = cropped.resize((width, height), resample=resample)
+
+    return out
 
 
 def _convert_to_enhanced(basic: AnalysisResult, description: str = "") -> EnhancedAnalysisResult:
@@ -1232,13 +1288,20 @@ def process_image_file(
         with Image.open(src) as image:
             image = image.convert("RGB")
             analysis = advisor.analyze(image, requested_style=requested_style)
+            working_image = image
+            auto_geometry = {"rotation": 0.0, "crop_factor": AUTO_CROP_DEFAULT_FACTOR}
+            if requested_style == "auto":
+                desc = getattr(analysis, "raw_description", None) or getattr(analysis, "description", "")
+                auto_geometry = _decide_auto_geometry(_extract_text_from_model_output(desc))
+                working_image = _apply_auto_geometry_to_pil(image, auto_geometry)
+            setattr(analysis, "auto_geometry_decision", f"rotate={int(auto_geometry['rotation'])}, crop={auto_geometry['crop_factor']:.2f}")
     except UnidentifiedImageError as exc:
         raise RuntimeError(f"Unable to decode image file: {src.name}") from exc
 
     # 如果没有指定多方案，走原有单方案流程
     if solutions is None:
         try:
-            styled = apply_style_to_pil(image, analysis.selected_style, retouch_controls=retouch_controls)
+            styled = apply_style_to_pil(working_image, analysis.selected_style, retouch_controls=retouch_controls)
         except UnidentifiedImageError as exc:
             raise RuntimeError(f"Unable to decode image file: {src.name}") from exc
         
@@ -1256,7 +1319,7 @@ def process_image_file(
         retouch.update(solution.retouch_overrides)
         
         # 应用方案
-        styled = apply_style_to_pil(image, style_name=None, retouch_controls=retouch, style_values=style_vals)
+        styled = apply_style_to_pil(working_image, style_name=None, retouch_controls=retouch, style_values=style_vals)
         
         # 保存
         output_path = _build_output_path(src, solution.name, ".jpg")
@@ -1381,6 +1444,9 @@ def process_media(
         f"Description: {analysis.description} | Selected style: {analysis.selected_style} | "
         f"Retouch: {summarize_retouch_controls(retouch_controls)}"
     )
+    geometry = getattr(analysis, "auto_geometry_decision", "")
+    if geometry:
+        reason = f"{reason} | Geometry: {geometry}"
     return output_path, analysis.selected_style, reason
 
 
