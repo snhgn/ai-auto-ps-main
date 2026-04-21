@@ -78,8 +78,8 @@ def _enable_heic_support() -> None:
     if Image is None:
         return
     try:
-        registered = {ext.lower() for ext in Image.registered_extensions().keys()}
-    except Exception:
+        registered = {ext.lower() for ext in Image.registered_extensions()}
+    except (AttributeError, TypeError):
         return
     if ".heic" in registered or ".heif" in registered:
         return
@@ -87,7 +87,7 @@ def _enable_heic_support() -> None:
         return
     try:
         pillow_heif.register_heif_opener()
-    except Exception:
+    except (AttributeError, RuntimeError, OSError, ValueError):
         pass
 
 
